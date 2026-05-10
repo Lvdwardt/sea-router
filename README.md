@@ -1,8 +1,6 @@
 # 🌊 Sea Router
 
-High-performance maritime route calculator. Finds shortest sea paths between any two ports on Earth, avoiding land masses.
-
-Built in **Rust** for maximum performance — routes that take 10+ seconds in JavaScript complete in under 500ms.
+Generates realistic maritime routes between any two ports on Earth. Routes follow natural shipping lanes, avoid land, traverse canals (Suez, Panama, Kiel), and produce smooth, map-ready GeoJSON paths.
 
 ## Prerequisites
 
@@ -111,7 +109,7 @@ docker build -t sea-router .
 docker run -p 3001:3001 sea-router
 ```
 
-> **Note:** The Docker build requires `data/osm_land_simplified.geojson.json` to be present locally. The graph is generated during the image build.
+> **Note:** The build downloads OSM land polygons (~873MB) and generates the routing graph during the image build. If you have `data/osm_land_simplified.geojson.json` locally, it'll use that instead (faster rebuild).
 
 ## License
 
