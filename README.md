@@ -1,6 +1,6 @@
 # 🌊 Sea Router
 
-Generates realistic maritime routes between any two ports on Earth. Routes follow natural shipping lanes, avoid land, traverse canals (Suez, Panama, Kiel), and produce smooth, map-ready GeoJSON paths.
+Generates realistic-looking maritime routes between any two ports on Earth for display on maps. Routes avoid land, traverse canals (Suez, Panama, Kiel), and produce smooth, map-ready GeoJSON polylines.
 
 ## Prerequisites
 
