@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sea Router — Route Viewer</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.css">
+  <script src="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; }
+    #map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+    .panel {
+      position: absolute; top: 16px; left: 16px; z-index: 10;
+      background: rgba(15, 15, 20, 0.92); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px; padding: 20px; width: 360px; max-height: calc(100vh - 32px); overflow-y: auto;
+      backdrop-filter: blur(20px); box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    h1 { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #fff; }
+    label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    input[type="text"], textarea {
+      width: 100%; padding: 8px 12px; background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+      color: #fff; font-size: 14px; margin-bottom: 12px; outline: none; font-family: inherit;
+    }
+    textarea { min-height: 80px; resize: vertical; font-size: 12px; }
+    input:focus, textarea:focus { border-color: #4a9eff; }
+    button {
+      width: 100%; padding: 10px; background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      border: none; border-radius: 8px; color: #fff; font-size: 14px;
+      font-weight: 600; cursor: pointer; transition: all 0.2s;
+    }
+    button:hover { background: linear-gradient(135deg, #3b82f6, #2563eb); transform: translateY(-1px); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    #status { font-size: 12px; color: #888; margin-top: 12px; min-height: 20px; }
+    #stats { font-size: 13px; color: #aaa; margin-top: 8px; line-height: 1.6; }
+    .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+    .preset {
+      padding: 4px 10px; background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 6px;
+      color: #aaa; font-size: 11px; cursor: pointer; transition: all 0.15s;
+    }
+    .preset:hover { background: rgba(255,255,255,0.12); color: #fff; }
+    .tabs { display: flex; gap: 0; margin-bottom: 16px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); }
+    .tab {
+      flex: 1; padding: 8px; text-align: center; font-size: 12px; cursor: pointer;
+      background: rgba(255,255,255,0.04); color: #888; transition: all 0.15s;
+      border: none; font-weight: 500;
+    }
+    .tab.active { background: rgba(255,255,255,0.12); color: #fff; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .layer-toggles { margin-top: 16px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px; }
+    .layer-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; cursor: pointer; font-size: 13px; }
+    .layer-toggle input[type="checkbox"] { accent-color: #4a9eff; width: 16px; height: 16px; cursor: pointer; }
+    .layer-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+    .layer-info { color: #666; font-size: 11px; margin-left: auto; }
+    .slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .slider-row input[type="range"] { flex: 1; accent-color: #4a9eff; }
+    .slider-row .slider-val { font-size: 14px; color: #fff; font-weight: 600; min-width: 30px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="panel">
+    <h1>🌊 Sea Router</h1>
+
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('single')">Point to Point</button>
+      <button class="tab" onclick="switchTab('multi')">Multi-Port</button>
+    </div>
+
+    <label>COASTAL AVOIDANCE</label>
+    <div class="slider-row">
+      <span style="font-size:11px;color:#666">Low</span>
+      <input type="range" id="penalty" min="0" max="20" step="1" value="8" oninput="document.getElementById('penalty-val').textContent=this.value">
+      <span style="font-size:11px;color:#666">High</span>
+      <span class="slider-val" id="penalty-val">8</span>
+    </div>
+
+    <div id="tab-single" class="tab-content active">
+      <div class="presets">
+        <span class="preset" data-from="-1.4,50.9" data-to="2.17,41.38">Southampton→Barcelona</span>
+        <span class="preset" data-from="-80.19,25.77" data-to="-86.85,21.16">Miami→Cancún</span>
+        <span class="preset" data-from="5.32,60.39" data-to="5.0,61.0">Bergen→North</span>
+        <span class="preset" data-from="5.3,43.3" data-to="121.8,31.2">Marseille→Shanghai</span>
+      </div>
+      <label>From (lon, lat)</label>
+      <input type="text" id="from" value="-1.4, 50.9" placeholder="lon, lat">
+      <label>To (lon, lat)</label>
+      <input type="text" id="to" value="2.17, 41.38" placeholder="lon, lat">
+      <button onclick="findSingleRoute()">Find Route</button>
+    </div>
+
+    <div id="tab-multi" class="tab-content">
+      <div class="presets">
+        <span class="preset" data-multi='[[-1.4,50.9],[2.17,41.38],[13.37,43.62],[18.09,42.64]]'>Southampton→Barcelona→Ancona→Dubrovnik</span>
+        <span class="preset" data-multi='[[-80.19,25.77],[-77.35,25.08],[-76.80,18.47],[-86.85,21.16],[-80.19,25.77]]'>Miami Caribbean Loop</span>
+      </div>
+      <label>Ports (one lon,lat per line)</label>
+      <textarea id="ports">-1.4, 50.9
+2.17, 41.38
+13.37, 43.62</textarea>
+      <button onclick="findMultiRoute()">Find Multi-Port Route</button>
+    </div>
+
+    <div id="status"></div>
+    <div id="stats"></div>
+
+    <div class="layer-toggles" id="layers" style="display:none">
+      <label style="margin-bottom: 8px">LAYERS</label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="toggle-raw" onchange="toggleLayer('raw', this.checked)">
+        <span class="layer-dot" style="background: #ff6600"></span>
+        Raw A* path
+        <span class="layer-info" id="info-raw"></span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="toggle-los" onchange="toggleLayer('los', this.checked)">
+        <span class="layer-dot" style="background: #00ccff"></span>
+        Line-of-sight simplified
+        <span class="layer-info" id="info-los"></span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" checked id="toggle-final" onchange="toggleLayer('final', this.checked)">
+        <span class="layer-dot" style="background: #ff4444"></span>
+        Final route
+        <span class="layer-info" id="info-final"></span>
+      </label>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = '';
+    let markers = [];
+    let routeData = null; // store full response
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://tiles.openfreemap.org/styles/liberty',
+      center: [0, 30],
+      zoom: 3,
+    });
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i === 0 && tab === 'single') || (i === 1 && tab === 'multi')));
+      document.getElementById('tab-single').classList.toggle('active', tab === 'single');
+      document.getElementById('tab-multi').classList.toggle('active', tab === 'multi');
+    }
+
+    document.querySelectorAll('.preset[data-from]').forEach(el => {
+      el.addEventListener('click', () => {
+        document.getElementById('from').value = el.dataset.from;
+        document.getElementById('to').value = el.dataset.to;
+      });
+    });
+    document.querySelectorAll('.preset[data-multi]').forEach(el => {
+      el.addEventListener('click', () => {
+        const ports = JSON.parse(el.dataset.multi);
+        document.getElementById('ports').value = ports.map(p => p.join(', ')).join('\n');
+      });
+    });
+
+    map.on('load', () => {
+      // Three layers: raw (orange), los (cyan), final (red)
+      const empty = { type: 'FeatureCollection', features: [] };
+
+      map.addSource('route-raw', { type: 'geojson', data: empty });
+      map.addLayer({ id: 'route-raw', type: 'line', source: 'route-raw',
+        paint: { 'line-color': '#ff6600', 'line-width': 2, 'line-opacity': 0.7 },
+        layout: { visibility: 'none' }
+      });
+
+      map.addSource('route-los', { type: 'geojson', data: empty });
+      map.addLayer({ id: 'route-los', type: 'line', source: 'route-los',
+        paint: { 'line-color': '#00ccff', 'line-width': 2, 'line-opacity': 0.7 },
+        layout: { visibility: 'none' }
+      });
+
+      map.addSource('route-final', { type: 'geojson', data: empty });
+      map.addLayer({ id: 'route-final-glow', type: 'line', source: 'route-final',
+        paint: { 'line-color': '#ff4444', 'line-width': 6, 'line-opacity': 0.25, 'line-blur': 3 }
+      });
+      map.addLayer({ id: 'route-final', type: 'line', source: 'route-final',
+        paint: { 'line-color': '#ff4444', 'line-width': 2.5, 'line-opacity': 0.9 }
+      });
+
+
+    });
+
+    function toggleLayer(name, visible) {
+      if (name === 'final') {
+        map.setLayoutProperty('route-final', 'visibility', visible ? 'visible' : 'none');
+        map.setLayoutProperty('route-final-glow', 'visibility', visible ? 'visible' : 'none');
+      } else {
+        map.setLayoutProperty(`route-${name}`, 'visibility', visible ? 'visible' : 'none');
+      }
+    }
+
+
+
+    function clearMarkers() { markers.forEach(m => m.remove()); markers = []; }
+
+    function showRouteData(geojson) {
+      routeData = geojson;
+      const rawFeature = geojson.features.find(f => f.properties.name === 'raw');
+      const losFeature = geojson.features.find(f => f.properties.name === 'los');
+      const finalFeature = geojson.features.find(f => f.properties.name === 'final');
+
+      const empty = { type: 'FeatureCollection', features: [] };
+      map.getSource('route-raw').setData(rawFeature ? { type: 'FeatureCollection', features: [rawFeature] } : empty);
+      map.getSource('route-los').setData(losFeature ? { type: 'FeatureCollection', features: [losFeature] } : empty);
+      map.getSource('route-final').setData(finalFeature ? { type: 'FeatureCollection', features: [finalFeature] } : empty);
+
+      // Update layer info
+      document.getElementById('info-raw').textContent = rawFeature ? `${rawFeature.properties.pointCount} pts` : '';
+      document.getElementById('info-los').textContent = losFeature ? `${losFeature.properties.pointCount} pts` : '';
+      document.getElementById('info-final').textContent = finalFeature ? `${finalFeature.properties.pointCount} pts` : '';
+
+
+
+      // Show layers panel
+      document.getElementById('layers').style.display = 'block';
+
+      // Fit map to final route
+      const coords = (finalFeature || rawFeature).geometry.coordinates;
+      const bounds = coords.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(coords[0], coords[0]));
+      map.fitBounds(bounds, { padding: 80 });
+    }
+
+    async function findSingleRoute() {
+      const fromVal = document.getElementById('from').value.split(',').map(Number);
+      const toVal = document.getElementById('to').value.split(',').map(Number);
+      const status = document.getElementById('status');
+      const stats = document.getElementById('stats');
+      status.textContent = 'Finding route...'; stats.textContent = '';
+
+      try {
+        const penalty = document.getElementById('penalty').value;
+        const res = await fetch(`${API_URL}/route?from=${fromVal[0]},${fromVal[1]}&to=${toVal[0]},${toVal[1]}&penalty=${penalty}`);
+        const geojson = await res.json();
+        if (geojson.error) { status.textContent = '❌ ' + geojson.error; return; }
+
+        showRouteData(geojson);
+        clearMarkers();
+        const coords = geojson.features[2].geometry.coordinates; // final
+        markers.push(new maplibregl.Marker({ color: '#22c55e' }).setLngLat(coords[0]).addTo(map));
+        markers.push(new maplibregl.Marker({ color: '#ef4444' }).setLngLat(coords[coords.length - 1]).addTo(map));
+
+        const p = geojson.features[0].properties; // raw has the stats
+        status.textContent = '✅ Route found!';
+        stats.innerHTML = `📏 <strong>${p.distanceKm} km</strong> · 🔍 ${p.nodesExplored} nodes · ⏱️ ${p.timeMs}ms`;
+      } catch (e) { status.textContent = '❌ ' + e.message; }
+    }
+
+    async function findMultiRoute() {
+      const portsText = document.getElementById('ports').value.trim();
+      const ports = portsText.split('\n').map(line => line.split(',').map(Number));
+      const status = document.getElementById('status');
+      const stats = document.getElementById('stats');
+      if (ports.length < 2) { status.textContent = '❌ Need at least 2 ports'; return; }
+      status.textContent = `Finding ${ports.length - 1}-leg route...`; stats.textContent = '';
+
+      try {
+        const res = await fetch(`${API_URL}/route/multi`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ports, penalty: parseInt(document.getElementById('penalty').value) }),
+        });
+        const geojson = await res.json();
+        if (geojson.error) { status.textContent = '❌ ' + geojson.error; return; }
+
+        showRouteData(geojson);
+        clearMarkers();
+        ports.forEach((p, i) => {
+          const color = i === 0 ? '#22c55e' : i === ports.length - 1 ? '#ef4444' : '#3b82f6';
+          markers.push(new maplibregl.Marker({ color }).setLngLat(p).addTo(map));
+        });
+
+        const p = geojson.features[0].properties;
+        status.textContent = `✅ ${p.legs}-leg route found!`;
+        stats.innerHTML = `📏 <strong>${p.distanceKm} km</strong> · 🔍 ${p.nodesExplored} nodes · ⏱️ ${p.timeMs}ms`;
+      } catch (e) { status.textContent = '❌ ' + e.message; }
+    }
+  </script>
+</body>
+</html>

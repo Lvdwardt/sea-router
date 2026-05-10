@@ -1,0 +1,14 @@
+# Land data files (see README for download instructions)
+data/*.geojson.json
+
+# Generated graph (regenerated from land data at build time)
+data/graph/
+
+# Cached route responses (development artifacts)
+data/routes/
+
+# Rust build artifacts
+rust/target/
+
+# Node
+node_modules/
