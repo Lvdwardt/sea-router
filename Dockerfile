@@ -25,27 +25,20 @@ WORKDIR /app
 
 COPY --from=builder /build/target/release/sea-router-rs /app/sea-router-rs
 
-# Optional COPY trick: Dockerfile always exists, glob matches the data file
-# only if present locally. This way the COPY never fails.
-RUN mkdir -p /app/data
-COPY Dockerfile data/osm_land_simplified.geojson.jso[n] /tmp/context/
-RUN if [ -f /tmp/context/osm_land_simplified.geojson.json ]; then \
-      echo "Using local land data" && \
-      mv /tmp/context/osm_land_simplified.geojson.json /app/data/; \
-    else \
-      echo "Downloading OSM land polygons (~873MB)..." && \
-      curl -L --retry 3 --progress-bar \
-        "https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip" \
-        -o /tmp/land.zip && \
-      echo "Extracting..." && \
-      unzip -q /tmp/land.zip -d /tmp/land && \
-      echo "Converting Shapefile to GeoJSON..." && \
-      ogr2ogr -f GeoJSON \
-        /app/data/osm_land_simplified.geojson.json \
-        /tmp/land/land-polygons-complete-4326/land_polygons.shp && \
-      rm -rf /tmp/land /tmp/land.zip; \
-    fi && \
-    rm -rf /tmp/context && \
+# Download OSM land polygons (CI always downloads; for local builds with
+# pre-existing data, mount or copy into the image after build).
+RUN mkdir -p /app/data && \
+    echo "Downloading OSM land polygons (~873MB)..." && \
+    curl -L --retry 3 --progress-bar \
+      "https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip" \
+      -o /tmp/land.zip && \
+    echo "Extracting..." && \
+    unzip -q /tmp/land.zip -d /tmp/land && \
+    echo "Converting Shapefile to GeoJSON..." && \
+    ogr2ogr -f GeoJSON \
+      /app/data/osm_land_simplified.geojson.json \
+      /tmp/land/land-polygons-complete-4326/land_polygons.shp && \
+    rm -rf /tmp/land /tmp/land.zip && \
     echo "Land data ready: $(du -sh /app/data/osm_land_simplified.geojson.json | cut -f1)"
 
 # Generate the routing graph
