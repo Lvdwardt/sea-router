@@ -1,6 +1,5 @@
 rust/target/
 node_modules/
 data/routes/
-data/graph/
 *.log
 .DS_Store
