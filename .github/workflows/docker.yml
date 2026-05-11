@@ -31,7 +31,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download pre-built graph from release
+      - name: Download pre-built data from release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -39,9 +39,13 @@ jobs:
           gh release download "graph-depth-16" \
             --repo ${{ github.repository }} \
             --pattern "sea-graph.json.gz" \
-            --dir data/graph
-          gunzip data/graph/sea-graph.json.gz
-          echo "Graph ready: $(du -sh data/graph/sea-graph.json | cut -f1)"
+            --pattern "osm_land_simplified.geojson.json.gz" \
+            --dir data
+          gunzip data/sea-graph.json.gz
+          mv data/sea-graph.json data/graph/sea-graph.json
+          gunzip data/osm_land_simplified.geojson.json.gz
+          echo "Graph: $(du -sh data/graph/sea-graph.json | cut -f1)"
+          echo "Land data: $(du -sh data/osm_land_simplified.geojson.json | cut -f1)"
 
       - name: Build and push
         run: |

@@ -29,6 +29,7 @@ COPY --from=builder /build/target/release/sea-router-rs /app/sea-router-rs
 # Pre-built graph and land data — generated once via generate-graph workflow,
 # provided in the build context by the CI workflow.
 COPY data/graph/sea-graph.json /app/data/graph/sea-graph.json
+COPY data/osm_land_simplified.geojson.json /app/data/osm_land_simplified.geojson.json
 
 COPY viewer.html /app/viewer.html
 
