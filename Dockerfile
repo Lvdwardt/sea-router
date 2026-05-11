@@ -18,7 +18,7 @@ RUN touch src/main.rs && cargo build --release
 FROM debian:bookworm-slim AS generator
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl unzip gdal-bin && \
+    apt-get install -y --no-install-recommends ca-certificates curl unzip gdal-bin && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
