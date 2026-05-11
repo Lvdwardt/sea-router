@@ -1,0 +1,80 @@
+name: Generate Routing Graph
+
+on:
+  workflow_dispatch:
+    inputs:
+      depth:
+        description: 'Quadtree depth (default: 16)'
+        required: false
+        default: '16'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl unzip gdal-bin
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Build sea-router binary
+        run: cd rust && cargo build --release
+
+      - name: Download OSM land polygons
+        run: |
+          mkdir -p data
+          echo "Downloading OSM land polygons..."
+          curl -L --retry 3 \
+            "https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip" \
+            -o /tmp/land.zip
+          unzip -q /tmp/land.zip -d /tmp/land
+          ogr2ogr -f GeoJSON \
+            data/osm_land_simplified.geojson.json \
+            /tmp/land/land-polygons-complete-4326/land_polygons.shp
+          rm -rf /tmp/land /tmp/land.zip
+          echo "Land data: $(du -sh data/osm_land_simplified.geojson.json | cut -f1)"
+
+      - name: Generate routing graph
+        run: |
+          mkdir -p data/graph
+          ./rust/target/release/sea-router-rs generate ${{ inputs.depth || '16' }} data
+          echo "Graph: $(du -sh data/graph/sea-graph.json | cut -f1)"
+
+      - name: Compress graph
+        run: |
+          cd data/graph
+          gzip -k sea-graph.json
+          echo "Compressed: $(du -sh sea-graph.json.gz | cut -f1)"
+
+      - name: Create GitHub Release and upload graph
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="graph-depth-${{ inputs.depth || '16' }}"
+          # Delete existing release if it exists
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          # Create new release
+          gh release create "$TAG" \
+            --title "Routing Graph (depth ${{ inputs.depth || '16' }})" \
+            --notes "Pre-generated sea routing graph at depth ${{ inputs.depth || '16' }}. Used by the Docker build." \
+            --latest=false \
+            data/graph/sea-graph.json.gz
+          echo "✅ Graph uploaded to release: $TAG"
