@@ -10,6 +10,8 @@ mod canals;
 use std::sync::Arc;
 use std::time::Instant;
 
+
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -129,7 +131,13 @@ async fn run_server(args: &[String]) {
     );
 
     let viewer_path = format!("{}/../viewer.html", data_dir);
-    let state = Arc::new(server::AppState { graph, classifier, viewer_path });
+    let node_count = graph.node_count;
+    let state = Arc::new(server::AppState {
+        graph,
+        classifier,
+        viewer_path,
+        router: std::sync::Mutex::new(router::Router::new(node_count)),
+    });
 
     println!(
         "\n🚀 API running at http://localhost:3001 (loaded in {}ms)",

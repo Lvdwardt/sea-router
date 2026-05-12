@@ -58,10 +58,25 @@
     .slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
     .slider-row input[type="range"] { flex: 1; accent-color: #4a9eff; }
     .slider-row .slider-val { font-size: 14px; color: #fff; font-weight: 600; min-width: 30px; text-align: center; }
+    /* right-click hint */
+    .click-hint {
+      font-size: 11px; color: #555; margin-top: 6px; text-align: center;
+      transition: color 0.3s;
+    }
+    .click-hint.flash { color: #4a9eff; }
+    /* floating click toast */
+    #click-toast {
+      position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: rgba(15,15,20,0.88); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px; padding: 6px 14px; font-size: 12px; color: #ccc;
+      pointer-events: none; opacity: 0; transition: opacity 0.3s; z-index: 20;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div id="click-toast"></div>
   <div class="panel">
     <h1>🌊 Sea Router</h1>
 
@@ -90,6 +105,7 @@
       <label>To (lon, lat)</label>
       <input type="text" id="to" value="2.17, 41.38" placeholder="lon, lat">
       <button onclick="findSingleRoute()">Find Route</button>
+      <div class="click-hint" id="single-hint">🖱️ Right-click map → set From / To</div>
     </div>
 
     <div id="tab-multi" class="tab-content">
@@ -102,6 +118,7 @@
 2.17, 41.38
 13.37, 43.62</textarea>
       <button onclick="findMultiRoute()">Find Multi-Port Route</button>
+      <div class="click-hint" id="multi-hint">🖱️ Right-click map → append port</div>
     </div>
 
     <div id="status"></div>
@@ -134,6 +151,26 @@
     const API_URL = '';
     let markers = [];
     let routeData = null; // store full response
+    // Right-click cycle state for single-mode: 0=set From, 1=set To
+    let singleClickPhase = 0;
+
+    // — — — Toast helper — — —
+    let toastTimer = null;
+    function showToast(msg) {
+      const toast = document.getElementById('click-toast');
+      toast.textContent = msg;
+      toast.style.opacity = '1';
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.style.opacity = '0', 2200);
+    }
+
+    // — — — Flash hint label — — —
+    function flashHint(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.add('flash');
+      setTimeout(() => el.classList.remove('flash'), 800);
+    }
 
     const map = new maplibregl.Map({
       container: 'map',
@@ -185,8 +222,41 @@
         paint: { 'line-color': '#ff4444', 'line-width': 2.5, 'line-opacity': 0.9 }
       });
 
+      // — — — Right-click to add point — — —
+      map.getCanvas().addEventListener('contextmenu', (e) => {
+        e.preventDefault(); // suppress browser context menu
+        const rect = map.getCanvas().getBoundingClientRect();
+        const lngLat = map.unproject([e.clientX - rect.left, e.clientY - rect.top]);
+        const lon = parseFloat(lngLat.lng.toFixed(4));
+        const lat = parseFloat(lngLat.lat.toFixed(4));
+        const coordStr = `${lon}, ${lat}`;
 
+        // Detect active tab
+        const isSingle = document.getElementById('tab-single').classList.contains('active');
+
+        if (isSingle) {
+          if (singleClickPhase === 0) {
+            document.getElementById('from').value = coordStr;
+            showToast(`📍 From set: ${coordStr}`);
+            flashHint('single-hint');
+            singleClickPhase = 1;
+          } else {
+            document.getElementById('to').value = coordStr;
+            showToast(`🏁 To set: ${coordStr}`);
+            flashHint('single-hint');
+            singleClickPhase = 0;
+          }
+        } else {
+          // Multi-port mode: append
+          const ta = document.getElementById('ports');
+          const current = ta.value.trim();
+          ta.value = current ? current + '\n' + coordStr : coordStr;
+          showToast(`➕ Port added: ${coordStr}`);
+          flashHint('multi-hint');
+        }
+      });
     });
+
 
     function toggleLayer(name, visible) {
       if (name === 'final') {

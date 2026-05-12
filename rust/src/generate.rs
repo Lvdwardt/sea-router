@@ -33,13 +33,19 @@ pub fn build_quadtree(classifier: &LandClassifier, max_depth: u8) -> QuadCell {
     let t0 = Instant::now();
     println!("  Building quadtree (max depth {})...", max_depth);
 
-    let mut stats = BuildStats { cells: 0, leaves: 0, last_depth: -1 };
+    let mut stats = BuildStats {
+        cells: 0,
+        leaves: 0,
+        last_depth: -1,
+        last_heartbeat: std::time::Instant::now(),
+        t0,
+    };
     let root = subdivide(classifier, -180.0, -90.0, 180.0, 90.0, 0, max_depth, &mut stats);
 
     println!(
         "  Quadtree built: {} cells, {} leaves in {:.1}s",
         stats.cells, stats.leaves,
-        t0.elapsed().as_secs_f64()
+        stats.t0.elapsed().as_secs_f64()
     );
     root
 }
@@ -48,6 +54,9 @@ struct BuildStats {
     cells: u64,
     leaves: u64,
     last_depth: i8,
+    /// Time-based heartbeat — so deep levels (15-16) don't go silent for 10+ min
+    last_heartbeat: std::time::Instant,
+    t0: std::time::Instant,
 }
 
 fn subdivide(
@@ -61,7 +70,7 @@ fn subdivide(
 
     let cell_type = classify_cell(classifier, min_lon, min_lat, max_lon, max_lat);
 
-    // Pure water or pure land → leaf
+    // Pure water or pure land -> leaf
     if cell_type != CellType::Mixed || depth >= max_depth {
         stats.leaves += 1;
 
@@ -80,10 +89,24 @@ fn subdivide(
         };
     }
 
-    // Progress reporting (once per depth level)
-    if depth as i8 > stats.last_depth && depth <= 14 {
+    // Log every new depth level (ALL depths now, including 15 & 16)
+    if depth as i8 > stats.last_depth {
         stats.last_depth = depth as i8;
-        println!("    depth {}: {} cells so far", depth, stats.cells);
+        println!(
+            "    depth {:>2}: {:>10} cells — {:.1}s elapsed",
+            depth, stats.cells,
+            stats.t0.elapsed().as_secs_f64()
+        );
+    }
+
+    // Heartbeat every 30 seconds so the terminal never goes silent during deep levels
+    if stats.last_heartbeat.elapsed().as_secs() >= 30 {
+        stats.last_heartbeat = std::time::Instant::now();
+        println!(
+            "    still running — depth {:>2}, {:>10} cells ({} leaves) — {:.0}s elapsed",
+            depth, stats.cells, stats.leaves,
+            stats.t0.elapsed().as_secs_f64()
+        );
     }
 
     let mid_lon = (min_lon + max_lon) / 2.0;

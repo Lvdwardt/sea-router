@@ -6,19 +6,21 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tower_http::cors::CorsLayer;
 
 use crate::graph::Graph;
 use crate::land::LandClassifier;
-use crate::router;
-use crate::los;
+use crate::router::Router as SeaRouter;
+use crate::los::{self, can_skip};
 
 pub struct AppState {
     pub graph: Graph,
     pub classifier: LandClassifier,
     pub viewer_path: String,
+    /// Reusable A* scratch buffers — avoids 68MB alloc per request.
+    pub router: Mutex<SeaRouter>,
 }
 
 #[derive(Deserialize)]
@@ -53,42 +55,10 @@ struct GeoJsonCollection {
     features: Vec<GeoJsonFeature>,
 }
 
-/// Check if a line segment crosses or runs too close to land.
-/// Matches graph builder precision: 500m sampling with ±1.5km perpendicular band.
-#[inline]
-fn segment_crosses_land(from: &[f64; 2], to: &[f64; 2], classifier: &LandClassifier) -> bool {
-    let dlon = to[0] - from[0];
-    let dlat = to[1] - from[1];
-    let approx_km = (dlon * dlon + dlat * dlat).sqrt() * 111.0;
-    let n = 3usize.max((approx_km / 0.5).ceil() as usize); // 500m intervals
 
-    let line_len = (dlon * dlon + dlat * dlat).sqrt();
-    if line_len < 1e-10 {
-        return false;
-    }
-
-    // ±1.5km perpendicular band
-    let perp_lon = -dlat / line_len * 0.0135;
-    let perp_lat = dlon / line_len * 0.0135;
-
-    for i in 1..n {
-        let t = i as f64 / n as f64;
-        let cx = from[0] + t * dlon;
-        let cy = from[1] + t * dlat;
-        if classifier.is_land(cx, cy)
-            || classifier.is_land(cx + perp_lon, cy + perp_lat)
-            || classifier.is_land(cx - perp_lon, cy - perp_lat)
-        {
-            return true;
-        }
-    }
-    false
-}
 
 /// Land-constrained Chaikin corner-cutting with adaptive smoothing.
-/// For each segment, tries the standard 25%/75% interpolation first.
-/// If that would cross land, tries gentler ratios (10%/90%, then 5%/95%)
-/// to produce soft corners near coastlines instead of sharp V-shapes.
+/// Uses the bbox fast-path for open-ocean segments — zero sampling cost.
 fn chaikin_smooth(
     path: &[[f64; 2]],
     iterations: usize,
@@ -101,30 +71,23 @@ fn chaikin_smooth(
             break;
         }
         let mut smoothed = Vec::with_capacity(result.len() * 2);
-        smoothed.push(result[0]); // keep start
+        smoothed.push(result[0]);
         for i in 0..result.len() - 1 {
             let p0 = result[i];
             let p1 = result[i + 1];
 
             let mut placed = false;
             for &ratio in ratios {
-                let q = [
-                    p0[0] * (1.0 - ratio) + p1[0] * ratio,
-                    p0[1] * (1.0 - ratio) + p1[1] * ratio,
-                ];
-                let r = [
-                    p0[0] * ratio + p1[0] * (1.0 - ratio),
-                    p0[1] * ratio + p1[1] * (1.0 - ratio),
-                ];
+                let q = [p0[0] * (1.0 - ratio) + p1[0] * ratio, p0[1] * (1.0 - ratio) + p1[1] * ratio];
+                let r = [p0[0] * ratio + p1[0] * (1.0 - ratio), p0[1] * ratio + p1[1] * (1.0 - ratio)];
 
                 let prev = *smoothed.last().unwrap();
-
-                let safe = !classifier.is_land(q[0], q[1])
+                // Use bbox fast-path: open-ocean segments are O(1), coastal ~5 checks each
+                if !classifier.is_land(q[0], q[1])
                     && !classifier.is_land(r[0], r[1])
-                    && !segment_crosses_land(&prev, &q, classifier)
-                    && !segment_crosses_land(&q, &r, classifier);
-
-                if safe {
+                    && can_skip(&prev, &q, classifier)
+                    && can_skip(&q, &r, classifier)
+                {
                     smoothed.push(q);
                     smoothed.push(r);
                     placed = true;
@@ -133,19 +96,17 @@ fn chaikin_smooth(
             }
 
             if !placed {
-                // No ratio worked — keep original endpoints
                 smoothed.push(p0);
                 smoothed.push(p1);
             }
         }
-        smoothed.push(result[result.len() - 1]); // keep end
-
-        // Remove consecutive near-duplicates
+        smoothed.push(result[result.len() - 1]);
         smoothed.dedup_by(|a, b| (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9);
         result = smoothed;
     }
     result
 }
+
 
 fn make_feature(coords: Vec<[f64; 2]>, name: &str, color: &str, props: serde_json::Value) -> GeoJsonFeature {
     let mut properties = props;
@@ -186,7 +147,7 @@ async fn route_handler(
 
     let penalty = params.penalty.unwrap_or(5.0);
 
-    let result = router::find_route(&state.graph, from[0], from[1], to[0], to[1], penalty);
+    let result = state.router.lock().unwrap().find_route(&state.graph, from[0], from[1], to[0], to[1], penalty);
 
     match result {
         None => {
@@ -195,7 +156,9 @@ async fn route_handler(
         Some(route) => {
             let astar_ms = t0.elapsed().as_secs_f64() * 1000.0;
             let los = los::simplify(&route.path, &state.classifier, 0.5);
-            let final_path = chaikin_smooth(&los, 4, &state.classifier);
+            // Fewer Chaikin iterations for long routes — they already have many waypoints
+            let chaikin_iters = if los.len() > 20 { 2 } else { 4 };
+            let final_path = chaikin_smooth(&los, chaikin_iters, &state.classifier);
             let total_ms = t0.elapsed().as_secs_f64() * 1000.0;
             let los_ms = total_ms - astar_ms;
 
@@ -244,7 +207,7 @@ async fn multi_route_handler(
         let from = body.ports[i];
         let to = body.ports[i + 1];
 
-        let result = router::find_route(&state.graph, from[0], from[1], to[0], to[1], penalty);
+        let result = state.router.lock().unwrap().find_route(&state.graph, from[0], from[1], to[0], to[1], penalty);
         match result {
             None => {
                 return (StatusCode::OK, Json(serde_json::json!({

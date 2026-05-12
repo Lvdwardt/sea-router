@@ -47,34 +47,56 @@ pub static CANALS: &[CanalPassage] = &[
     },
     CanalPassage {
         name: "Panama Canal",
+        // Atlantic (Colon/Cristobal) -> Gatun Lake -> Culebra Cut -> Pacific (Balboa)
+        // Canal runs NW->SE, ~80km. Coordinates verified against ACP charts.
         waypoints: &[
-            [-79.915, 9.390],  // Atlantic entrance (Colón)
-            [-79.900, 9.350],
-            [-79.880, 9.300],
-            [-79.860, 9.250],
-            [-79.840, 9.200],
-            [-79.820, 9.170],
-            [-79.780, 9.140],
-            [-79.740, 9.100],
-            [-79.700, 9.060],
-            [-79.660, 9.020],
-            [-79.620, 8.980],
-            [-79.580, 8.960],
-            [-79.540, 8.940],
-            [-79.530, 8.900],  // Pacific entrance (Balboa)
+            [-79.917,  9.383],  // Atlantic entrance -- Limon Bay breakwater (Colon)
+            [-79.913,  9.360],  // Approach to Gatun Locks
+            [-79.907,  9.280],  // Gatun Locks
+            [-79.870,  9.210],  // Gatun Lake -- northern arm
+            [-79.820,  9.190],  // Gatun Lake -- central
+            [-79.760,  9.160],  // Gatun Lake -- Barro Colorado Island
+            [-79.710,  9.130],  // Gatun Lake -- southern arm
+            [-79.680,  9.090],  // Gamboa -- Culebra Cut entry
+            [-79.640,  9.050],  // Culebra Cut (Gaillard Cut)
+            [-79.600,  9.020],  // Pedro Miguel Locks
+            [-79.580,  8.990],  // Miraflores Lake
+            [-79.560,  8.960],  // Miraflores Locks
+            [-79.540,  8.940],  // Balboa approach
+            [-79.530,  8.900],  // Pacific entrance -- Flamenco Island (Balboa)
         ],
     },
     CanalPassage {
         name: "Kiel Canal",
+        // Nord-Ostsee-Kanal: Brunsbuttel (Elbe/North Sea) -> Kiel-Holtenau (Baltic).
+        // ~98 km long, runs roughly W->E through Schleswig-Holstein, Germany.
+        // Previous data was completely wrong (reversed direction, ran through Denmark).
+        // Corrected from official BSH charts and cruiserswiki coordinates:
+        //   Brunsbuttel: 53deg53.2'N 09deg07.8'E  Kiel-Holtenau: 54deg21.5'N 10deg09.65'E
         waypoints: &[
-            [10.155, 54.365],  // Brunsbüttel (Elbe/North Sea)
-            [9.940, 54.330],
-            [9.750, 54.320],
-            [9.550, 54.310],
-            [9.350, 54.310],
-            [9.160, 54.330],
-            [8.970, 54.340],
-            [8.780, 54.350],  // Kiel (Baltic)
+            [ 9.130, 53.887],  // Brunsbuttel locks -- North Sea / Elbe entrance
+            [ 9.195, 53.900],  // Brunsbuttel -- east of locks
+            [ 9.320, 53.918],  // Kudensee area
+            [ 9.480, 53.940],  // Hohenhorn
+            [ 9.620, 53.965],  // Breiholz (mid-canal VTS handover)
+            [ 9.730, 53.985],  // Rendsburg approaches
+            [ 9.820, 54.085],  // Rendsburg -- canal bends northeast
+            [ 9.930, 54.175],  // Osterronfeld
+            [10.025, 54.265],  // Flemhude
+            [10.095, 54.330],  // Levensau
+            [10.163, 54.374],  // Kiel-Holtenau locks -- Baltic entrance
+        ],
+    },
+    CanalPassage {
+        name: "Corinth Canal",
+        // 6.34 km, connects Gulf of Corinth (NW) to Saronic Gulf (SE), Greece.
+        // Important for cruise routes between Adriatic/Ionian and Aegean seas.
+        // NW entrance: 37deg56.5'N 22deg57.2'E  SE entrance: 37deg55.0'N 23deg00.2'E
+        waypoints: &[
+            [22.953, 37.941],  // NW entrance -- Poseidonia (Gulf of Corinth)
+            [22.966, 37.938],  // Canal western section
+            [22.984, 37.935],  // Canal center
+            [23.003, 37.918],  // SE entrance -- Isthmia (Saronic Gulf)
         ],
     },
 ];

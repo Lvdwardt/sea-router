@@ -635,6 +635,7 @@ dependencies = [
  "axum",
  "dashmap",
  "geo",
+ "rayon",
  "rstar",
  "serde",
  "serde_json",

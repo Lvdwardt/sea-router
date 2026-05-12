@@ -12,6 +12,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 rstar = "0.12"
 geo = "0.29"
 dashmap = "6"
+rayon = "1.12.0"
 
 [profile.release]
 opt-level = 3
