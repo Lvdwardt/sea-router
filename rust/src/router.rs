@@ -1,4 +1,5 @@
 use crate::graph::Graph;
+use crate::land::LandClassifier;
 use std::collections::BinaryHeap;
 use std::time::Instant;
 
@@ -63,6 +64,7 @@ impl Router {
     pub fn find_route(
         &mut self,
         graph: &Graph,
+        classifier: &LandClassifier,
         from_lon: f64, from_lat: f64,
         to_lon: f64, to_lat: f64,
         coastal_penalty: f32,
@@ -73,9 +75,17 @@ impl Router {
         let end   = graph.find_nearest(to_lon, to_lat);
 
         if start == end {
+            // Both ports snap to the same graph node. Return the true port
+            // coordinates so the drawn line still spans the two ports instead of
+            // collapsing onto a single offshore node.
+            let mut path = vec![[from_lon, from_lat]];
+            if (to_lon - from_lon).abs() > 1e-9 || (to_lat - from_lat).abs() > 1e-9 {
+                path.push([to_lon, to_lat]);
+            }
+            unwrap_lons(&mut path);
             return Some(RouteResult {
-                path: vec![[graph.lon(start), graph.lat(start)]],
-                distance_km: 0.0,
+                path,
+                distance_km: haversine_km(from_lon, from_lat, to_lon, to_lat),
                 nodes_explored: 0,
                 time_ms: t0.elapsed().as_secs_f64() * 1000.0,
             });
@@ -112,10 +122,20 @@ impl Router {
                     id = cf as usize;
                 }
                 path.reverse();
+                // The path begins/ends at the snapped graph nodes, not the real
+                // ports. For well-connected coastal ports the snapped node sits
+                // metres offshore so nobody noticed; for isolated ports (small
+                // islands like Bermuda) it can be hundreds of km away, leaving
+                // the line nowhere near the pin. Stitch the true port coordinates
+                // onto the ends when the connector stays in open water.
+                let connector_km = stitch_endpoints(
+                    &mut path, classifier,
+                    from_lon, from_lat, to_lon, to_lat,
+                );
                 unwrap_lons(&mut path);
                 return Some(RouteResult {
                     path: douglas_peucker(&path, 0.01),
-                    distance_km: self.entries[end].g_score,
+                    distance_km: self.entries[end].g_score + connector_km,
                     nodes_explored,
                     time_ms: t0.elapsed().as_secs_f64() * 1000.0,
                 });
@@ -167,6 +187,75 @@ pub fn unwrap_lons(path: &mut [[f64; 2]]) {
         while d > 180.0 { path[i][0] -= 360.0; d -= 360.0; }
         while d < -180.0 { path[i][0] += 360.0; d += 360.0; }
     }
+}
+
+/// Distance below which a connector sample is treated as "at the port" and its
+/// land hits are ignored. Ports sit on the coast, so the cell containing the
+/// port (and the immediate approach) often rasterizes as land — without this
+/// tolerance the connector to a coastal port would always be rejected.
+const SHORE_TOLERANCE_KM: f64 = 3.0;
+
+/// Prepend the real origin and append the real destination to a routed path
+/// when the straight connector from the snapped graph node to the true port
+/// stays in open water (ignoring land within `SHORE_TOLERANCE_KM` of the port
+/// itself, since ports are coastal). Returns the total km of connector added so
+/// the caller can keep `distance_km` honest. A connector that would cross land
+/// mid-segment is dropped, leaving the snapped node as the endpoint.
+fn stitch_endpoints(
+    path: &mut Vec<[f64; 2]>,
+    classifier: &LandClassifier,
+    from_lon: f64, from_lat: f64,
+    to_lon: f64, to_lat: f64,
+) -> f64 {
+    let mut extra = 0.0;
+
+    if let Some(&first) = path.first() {
+        let p = [from_lon, from_lat];
+        if !same_point(p, first) && connector_clear(classifier, p, first) {
+            extra += haversine_km(p[0], p[1], first[0], first[1]);
+            path.insert(0, p);
+        }
+    }
+
+    if let Some(&last) = path.last() {
+        let p = [to_lon, to_lat];
+        if !same_point(p, last) && connector_clear(classifier, last, p) {
+            extra += haversine_km(last[0], last[1], p[0], p[1]);
+            path.push(p);
+        }
+    }
+
+    extra
+}
+
+#[inline]
+fn same_point(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9
+}
+
+/// True if the straight segment a→b stays in water, sampled ~every 2km. Land
+/// hits within `SHORE_TOLERANCE_KM` of either endpoint are ignored so coastal
+/// ports remain reachable; interior land hits reject the connector.
+fn connector_clear(classifier: &LandClassifier, a: [f64; 2], b: [f64; 2]) -> bool {
+    let total = haversine_km(a[0], a[1], b[0], b[1]);
+    if total < 1e-6 {
+        return true;
+    }
+    let n = ((total / 2.0).ceil() as usize).max(2);
+    for i in 0..=n {
+        let t = i as f64 / n as f64;
+        let d_from_a = t * total;
+        let d_from_b = (1.0 - t) * total;
+        if d_from_a <= SHORE_TOLERANCE_KM || d_from_b <= SHORE_TOLERANCE_KM {
+            continue;
+        }
+        let lon = a[0] + t * (b[0] - a[0]);
+        let lat = a[1] + t * (b[1] - a[1]);
+        if classifier.is_land(lon, lat) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Haversine distance in km. Longitude delta is wrapped to the short way
@@ -254,4 +343,76 @@ fn perp_dist(pt: &[f64; 2], s: &[f64; 2], e: &[f64; 2]) -> f64 {
     let t = ((pt[0] - s[0]) * dx + (pt[1] - s[1]) * dy / len_sq).clamp(0.0, 1.0);
     let (px, py) = (s[0] + t * dx, s[1] + t * dy);
     ((pt[0] - px).powi(2) + (pt[1] - py).powi(2)).sqrt()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Write a file to the temp dir and return its path.
+    fn temp_file(name: &str, contents: &str) -> String {
+        let mut path = std::env::temp_dir();
+        path.push(name);
+        fs::write(&path, contents).unwrap();
+        // Drop any stale raster cache so LandClassifier rebuilds from contents.
+        let _ = fs::remove_file(format!("{}.raster", path.to_str().unwrap()));
+        path.to_str().unwrap().to_string()
+    }
+
+    fn all_water() -> LandClassifier {
+        let p = temp_file("sr_test_water.geojson.json", r#"{"features":[]}"#);
+        LandClassifier::load(&p).unwrap()
+    }
+
+    /// Two open-ocean nodes at lat 36, joined by one edge.
+    fn two_node_graph() -> Graph {
+        let json = r#"{"nodeCount":2,"edgeCount":1,
+            "nodes":[-61.0,36.0,1.0,-60.0,36.0,1.0],
+            "edges":[0,1,900]}"#;
+        let p = temp_file("sr_test_graph.json", json);
+        Graph::load(&p).unwrap()
+    }
+
+    #[test]
+    fn stitches_true_port_coords_over_open_water() {
+        let graph = two_node_graph();
+        let classifier = all_water();
+        let mut router = Router::new(graph.node_count);
+
+        // Ports sit offshore of each snapped node; the gap is open water.
+        let from = [-61.2, 36.0];
+        let to = [-59.9, 36.0];
+        let r = router
+            .find_route(&graph, &classifier, from[0], from[1], to[0], to[1], 8.0)
+            .expect("route");
+
+        let first = *r.path.first().unwrap();
+        let last = *r.path.last().unwrap();
+        assert!((first[0] - from[0]).abs() < 1e-6 && (first[1] - from[1]).abs() < 1e-6,
+            "path should start at the true origin port, got {:?}", first);
+        assert!((last[0] - to[0]).abs() < 1e-6 && (last[1] - to[1]).abs() < 1e-6,
+            "path should end at the true destination port, got {:?}", last);
+    }
+
+    #[test]
+    fn drops_connector_that_would_cross_land() {
+        let graph = two_node_graph();
+        // Land strip between the origin port (-61.2) and its snapped node (-61.0),
+        // clear of both endpoints' 3km shore tolerance.
+        let land = r#"{"features":[{"geometry":{"type":"Polygon","coordinates":
+            [[[-61.15,35.9],[-61.05,35.9],[-61.05,36.1],[-61.15,36.1],[-61.15,35.9]]]}}]}"#;
+        let p = temp_file("sr_test_land_strip.geojson.json", land);
+        let classifier = LandClassifier::load(&p).unwrap();
+        let mut router = Router::new(graph.node_count);
+
+        let r = router
+            .find_route(&graph, &classifier, -61.2, 36.0, -59.9, 36.0, 8.0)
+            .expect("route");
+
+        // Front connector crosses land → dropped → path starts at snapped node.
+        let first = *r.path.first().unwrap();
+        assert!((first[0] - (-61.0)).abs() < 1e-6 && (first[1] - 36.0).abs() < 1e-6,
+            "land-crossing connector should be dropped, leaving the snapped node; got {:?}", first);
+    }
 }

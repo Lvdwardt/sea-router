@@ -147,7 +147,7 @@ async fn route_handler(
 
     let penalty = params.penalty.unwrap_or(5.0);
 
-    let result = state.router.lock().unwrap().find_route(&state.graph, from[0], from[1], to[0], to[1], penalty);
+    let result = state.router.lock().unwrap().find_route(&state.graph, &state.classifier, from[0], from[1], to[0], to[1], penalty);
 
     match result {
         None => {
@@ -211,7 +211,7 @@ async fn multi_route_handler(
         let from = body.ports[i];
         let to = body.ports[i + 1];
 
-        let result = state.router.lock().unwrap().find_route(&state.graph, from[0], from[1], to[0], to[1], penalty);
+        let result = state.router.lock().unwrap().find_route(&state.graph, &state.classifier, from[0], from[1], to[0], to[1], penalty);
         match result {
             None => {
                 return (StatusCode::OK, Json(serde_json::json!({

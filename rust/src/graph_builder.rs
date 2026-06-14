@@ -1,7 +1,7 @@
 use crate::generate::WaterLeaf;
 use crate::land::LandClassifier;
 use rstar::{RTree, RTreeObject, AABB};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 /// Graph node from a water leaf cell.
@@ -237,6 +237,20 @@ pub fn build_graph(leaves: &[WaterLeaf], classifier: &LandClassifier) -> GraphOu
         east_seam.len(), west_seam.len(), seam_edges_added
     );
 
+    // ── Reconnect isolated water bodies ──
+    // The coastal buffer in `edge_crosses_land` rejects any cell-to-cell edge
+    // running within ~1.5km of land. Around a small isolated island (e.g.
+    // Bermuda) this severs every link between the island's near-shore water
+    // cells and the open-ocean grid, so they form their own tiny connected
+    // component. The graph loader only indexes the largest component for
+    // nearest-node lookup, so those island cells become invisible and any port
+    // there snaps to a far-offshore mainland node (Bermuda snapped ~540km out).
+    // Bridge each non-main component back to the main one with the shortest
+    // straight link that stays in open water — lakes stay isolated because
+    // their only bridges would cross land.
+    println!("  Reconnecting isolated components...");
+    reconnect_islands(&nodes, &mut raw_edges, classifier);
+
     // Pack into flat arrays
     let mut flat_nodes = Vec::with_capacity(nodes.len() * 3);
     for n in &nodes {
@@ -346,5 +360,217 @@ pub fn build_graph(leaves: &[WaterLeaf], classifier: &LandClassifier) -> GraphOu
         edge_count: total_edges,
         nodes: flat_nodes,
         edges: flat_edges,
+    }
+}
+
+// ── Isolated-component reconnection ───────────────────────────────────────────
+
+/// Union-find with path compression.
+fn uf_find(parent: &mut [u32], x: u32) -> u32 {
+    let mut root = x;
+    while parent[root as usize] != root {
+        root = parent[root as usize];
+    }
+    let mut cur = x;
+    while parent[cur as usize] != root {
+        let next = parent[cur as usize];
+        parent[cur as usize] = root;
+        cur = next;
+    }
+    root
+}
+
+fn uf_union(parent: &mut [u32], a: u32, b: u32) {
+    let ra = uf_find(parent, a);
+    let rb = uf_find(parent, b);
+    if ra != rb {
+        parent[ra as usize] = rb;
+    }
+}
+
+/// True if the straight segment a→b stays in water, sampled ~every 2km. Land
+/// hits within `shore_tol_km` of either endpoint are ignored (island/port cells
+/// often rasterize as land); interior land hits reject the bridge — this is
+/// what keeps inland water bodies (lakes) from being welded to the ocean.
+fn segment_clear(classifier: &LandClassifier, a: [f64; 2], b: [f64; 2], shore_tol_km: f64) -> bool {
+    let total = haversine_km(a[0], a[1], b[0], b[1]);
+    if total < 1e-6 {
+        return true;
+    }
+    let n = ((total / 2.0).ceil() as usize).max(2);
+    for i in 0..=n {
+        let t = i as f64 / n as f64;
+        let d_from_a = t * total;
+        let d_from_b = (1.0 - t) * total;
+        if d_from_a <= shore_tol_km || d_from_b <= shore_tol_km {
+            continue;
+        }
+        let lon = a[0] + t * (b[0] - a[0]);
+        let lat = a[1] + t * (b[1] - a[1]);
+        if classifier.is_land(lon, lat) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Find the connected components of the cell graph and bridge every non-main
+/// component to the main one via the shortest open-water link found among its
+/// nodes. Bridge edges are appended to `raw_edges`.
+fn reconnect_islands(
+    nodes: &[GNode],
+    raw_edges: &mut Vec<(u32, u32, f64)>,
+    classifier: &LandClassifier,
+) {
+    use rstar::PointDistance;
+
+    let t0 = Instant::now();
+    let n = nodes.len();
+    if n == 0 {
+        return;
+    }
+
+    // Build components from the current edge set.
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    for &(a, b, _) in raw_edges.iter() {
+        uf_union(&mut parent, a, b);
+    }
+    let mut root_of = vec![0u32; n];
+    for i in 0..n {
+        root_of[i] = uf_find(&mut parent, i as u32);
+    }
+    let mut size = vec![0u32; n];
+    for i in 0..n {
+        size[root_of[i] as usize] += 1;
+    }
+    let main_root = (0..n).max_by_key(|&r| size[r]).map(|r| r as u32).unwrap();
+
+    // Spatial index over main-component nodes for nearest-node bridge search.
+    #[derive(Clone)]
+    struct MainNode {
+        id: u32,
+        lon: f64,
+        lat: f64,
+    }
+    impl RTreeObject for MainNode {
+        type Envelope = AABB<[f64; 2]>;
+        fn envelope(&self) -> Self::Envelope {
+            AABB::from_point([self.lon, self.lat])
+        }
+    }
+    impl PointDistance for MainNode {
+        fn distance_2(&self, p: &[f64; 2]) -> f64 {
+            let dx = self.lon - p[0];
+            let dy = self.lat - p[1];
+            dx * dx + dy * dy
+        }
+    }
+
+    let main_pts: Vec<MainNode> = (0..n)
+        .filter(|&i| root_of[i] == main_root)
+        .map(|i| MainNode { id: i as u32, lon: nodes[i].lon, lat: nodes[i].lat })
+        .collect();
+    if main_pts.is_empty() {
+        return;
+    }
+    let main_tree = RTree::bulk_load(main_pts);
+
+    // Open-water cap: bridges longer than this are almost certainly spanning a
+    // genuinely separate sea, not reconnecting a severed island. The land check
+    // is the real correctness guard; this just bounds pathological links.
+    const MAX_BRIDGE_KM: f64 = 3000.0;
+    const SHORE_TOL_KM: f64 = 2.0;
+
+    // Per non-main component, keep the shortest clear bridge: (dist, island, main).
+    let mut best: HashMap<u32, (f64, u32, u32)> = HashMap::new();
+    for i in 0..n {
+        let r = root_of[i];
+        if r == main_root {
+            continue;
+        }
+        let from = [nodes[i].lon, nodes[i].lat];
+        for m in main_tree.nearest_neighbor_iter(&from).take(6) {
+            let d = haversine_km(from[0], from[1], m.lon, m.lat);
+            if d > MAX_BRIDGE_KM {
+                break;
+            }
+            if !segment_clear(classifier, from, [m.lon, m.lat], SHORE_TOL_KM) {
+                continue;
+            }
+            let e = best.entry(r).or_insert((f64::INFINITY, 0, 0));
+            if d < e.0 {
+                *e = (d, i as u32, m.id);
+            }
+            break; // nearest-first: first clear hit is this node's shortest bridge
+        }
+    }
+
+    let mut bridges = 0usize;
+    for (_root, (d, island, main_id)) in best.iter() {
+        raw_edges.push((*island, *main_id, *d));
+        bridges += 1;
+    }
+
+    println!(
+        "  Reconnected {} isolated components in {:.1}s",
+        bridges,
+        t0.elapsed().as_secs_f64()
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_file(name: &str, contents: &str) -> String {
+        let mut path = std::env::temp_dir();
+        path.push(name);
+        fs::write(&path, contents).unwrap();
+        let _ = fs::remove_file(format!("{}.raster", path.to_str().unwrap()));
+        path.to_str().unwrap().to_string()
+    }
+
+    fn all_water() -> LandClassifier {
+        let p = temp_file("gb_test_water.geojson.json", r#"{"features":[]}"#);
+        LandClassifier::load(&p).unwrap()
+    }
+
+    fn gnode(lon: f64, lat: f64) -> GNode {
+        GNode { lon, lat, depth: 1 }
+    }
+
+    #[test]
+    fn bridges_isolated_island_to_main_component() {
+        // Nodes 0,1,2 form the main component; node 3 is an isolated island cell
+        // sitting in open water near the main component, with no edges.
+        let nodes = vec![
+            gnode(-61.0, 36.0),
+            gnode(-60.0, 36.0),
+            gnode(-60.0, 35.0),
+            gnode(-61.0, 35.0),
+        ];
+        let mut raw_edges = vec![(0u32, 1u32, 90.0), (1, 2, 90.0), (0, 2, 120.0)];
+
+        reconnect_islands(&nodes, &mut raw_edges, &all_water());
+
+        let touches_island = raw_edges.iter().any(|&(a, b, _)| a == 3 || b == 3);
+        assert!(touches_island, "isolated island node 3 should be bridged into the graph");
+    }
+
+    #[test]
+    fn segment_clear_passes_open_water_and_blocks_land() {
+        let water = all_water();
+        let a = [-61.0, 35.0];
+        let b = [-60.0, 35.0];
+        assert!(segment_clear(&water, a, b, 2.0), "open-water segment must be clear");
+
+        // Land box squarely on the midpoint of a→b, clear of both endpoints.
+        let land = r#"{"features":[{"geometry":{"type":"Polygon","coordinates":
+            [[[-60.6,34.9],[-60.4,34.9],[-60.4,35.1],[-60.6,35.1],[-60.6,34.9]]]}}]}"#;
+        let p = temp_file("gb_test_land_box.geojson.json", land);
+        let classifier = LandClassifier::load(&p).unwrap();
+        assert!(!segment_clear(&classifier, a, b, 2.0),
+            "segment crossing a land box must be rejected (keeps lakes from welding to the ocean)");
     }
 }
