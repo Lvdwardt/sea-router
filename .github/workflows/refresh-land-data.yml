@@ -1,0 +1,63 @@
+name: Refresh Land Data
+
+# Fetches the OSM land polygons, converts them to GeoJSON, and caches the
+# result as a release asset that "Generate Routing Graph" reuses. Run this
+# only when you want to update coastlines (rarely) — it is deliberately the
+# ONLY place that touches the flaky osmdata.openstreetmap.de host, so a bad
+# OSM day can never block a graph regen or a deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to store the land asset on'
+        required: false
+        default: 'graph-depth-16'
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl unzip gdal-bin
+
+      - name: Download OSM land polygons
+        run: |
+          echo "Downloading OSM land polygons..."
+          # osmdata.openstreetmap.de intermittently stalls on connect; ride it
+          # out with aggressive retries on all errors rather than failing.
+          curl -L \
+            --retry 6 --retry-delay 20 --retry-all-errors --retry-connrefused \
+            --connect-timeout 60 --max-time 2400 \
+            "https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip" \
+            -o /tmp/land.zip
+          unzip -q /tmp/land.zip -d /tmp/land
+          ogr2ogr -f GeoJSON \
+            osm_land_simplified.geojson.json \
+            /tmp/land/land-polygons-complete-4326/land_polygons.shp
+          rm -rf /tmp/land /tmp/land.zip
+          echo "Land data: $(du -sh osm_land_simplified.geojson.json | cut -f1)"
+
+      - name: Compress
+        run: |
+          gzip -kf osm_land_simplified.geojson.json
+          echo "Compressed: $(du -sh osm_land_simplified.geojson.json.gz | cut -f1)"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag || 'graph-depth-16' }}"
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "Routing Graph ($TAG)" \
+              --notes "Pre-generated sea routing graph + cached land data. Used by the Docker build." \
+              --latest=false
+          gh release upload "$TAG" osm_land_simplified.geojson.json.gz --clobber
+          echo "✅ Land data uploaded to release: $TAG"

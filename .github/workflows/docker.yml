@@ -116,7 +116,10 @@ jobs:
   # Trigger Coolify to pull the new :latest image and redeploy.
   deploy:
     needs: build-and-push
-    if: ${{ needs.build-and-push.result == 'success' }}
+    # always() is required: when regen is skipped (runtime-only change), the
+    # skip would otherwise propagate transitively through build-and-push to
+    # here and silently skip the deploy.
+    if: ${{ always() && needs.build-and-push.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Coolify redeploy

@@ -27,12 +27,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ca-certificates curl unzip gdal-bin
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -48,22 +42,20 @@ jobs:
       - name: Build sea-router binary
         run: cd rust && cargo build --release
 
-      - name: Download OSM land polygons
+      - name: Fetch cached land data from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Land polygons are a static input — pulled once from OSM by the
+          # "Refresh Land Data" workflow and cached as a release asset. Reuse it
+          # here instead of re-fetching 873MB from the flaky OSM host on every
+          # regen. To update coastlines, run "Refresh Land Data".
           mkdir -p data
-          echo "Downloading OSM land polygons..."
-          # osmdata.openstreetmap.de intermittently stalls on connect; ride it
-          # out with aggressive retries on all errors rather than failing the run.
-          curl -L \
-            --retry 6 --retry-delay 20 --retry-all-errors --retry-connrefused \
-            --connect-timeout 60 --max-time 2400 \
-            "https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip" \
-            -o /tmp/land.zip
-          unzip -q /tmp/land.zip -d /tmp/land
-          ogr2ogr -f GeoJSON \
-            data/osm_land_simplified.geojson.json \
-            /tmp/land/land-polygons-complete-4326/land_polygons.shp
-          rm -rf /tmp/land /tmp/land.zip
+          gh release download "graph-depth-${{ inputs.depth || '16' }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "osm_land_simplified.geojson.json.gz" \
+            --dir data
+          gunzip data/osm_land_simplified.geojson.json.gz
           echo "Land data: $(du -sh data/osm_land_simplified.geojson.json | cut -f1)"
 
       - name: Generate routing graph
