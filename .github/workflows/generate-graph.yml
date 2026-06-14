@@ -52,7 +52,11 @@ jobs:
         run: |
           mkdir -p data
           echo "Downloading OSM land polygons..."
-          curl -L --retry 3 \
+          # osmdata.openstreetmap.de intermittently stalls on connect; ride it
+          # out with aggressive retries on all errors rather than failing the run.
+          curl -L \
+            --retry 6 --retry-delay 20 --retry-all-errors --retry-connrefused \
+            --connect-timeout 60 --max-time 2400 \
             "https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip" \
             -o /tmp/land.zip
           unzip -q /tmp/land.zip -d /tmp/land
