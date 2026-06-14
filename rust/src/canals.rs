@@ -67,27 +67,6 @@ pub static CANALS: &[CanalPassage] = &[
         ],
     },
     CanalPassage {
-        name: "Kiel Canal",
-        // Nord-Ostsee-Kanal: Brunsbuttel (Elbe/North Sea) -> Kiel-Holtenau (Baltic).
-        // ~98 km long, runs roughly W->E through Schleswig-Holstein, Germany.
-        // Previous data was completely wrong (reversed direction, ran through Denmark).
-        // Corrected from official BSH charts and cruiserswiki coordinates:
-        //   Brunsbuttel: 53deg53.2'N 09deg07.8'E  Kiel-Holtenau: 54deg21.5'N 10deg09.65'E
-        waypoints: &[
-            [ 9.130, 53.887],  // Brunsbuttel locks -- North Sea / Elbe entrance
-            [ 9.195, 53.900],  // Brunsbuttel -- east of locks
-            [ 9.320, 53.918],  // Kudensee area
-            [ 9.480, 53.940],  // Hohenhorn
-            [ 9.620, 53.965],  // Breiholz (mid-canal VTS handover)
-            [ 9.730, 53.985],  // Rendsburg approaches
-            [ 9.820, 54.085],  // Rendsburg -- canal bends northeast
-            [ 9.930, 54.175],  // Osterronfeld
-            [10.025, 54.265],  // Flemhude
-            [10.095, 54.330],  // Levensau
-            [10.163, 54.374],  // Kiel-Holtenau locks -- Baltic entrance
-        ],
-    },
-    CanalPassage {
         name: "Corinth Canal",
         // 6.34 km, connects Gulf of Corinth (NW) to Saronic Gulf (SE), Greece.
         // Important for cruise routes between Adriatic/Ionian and Aegean seas.

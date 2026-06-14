@@ -202,6 +202,10 @@ async fn multi_route_handler(
     let mut final_all: Vec<[f64; 2]> = Vec::new();
     let mut total_distance = 0.0f64;
     let mut total_nodes = 0usize;
+    // Longitude of the last emitted point, used to keep successive legs
+    // continuous across the antimeridian (each leg's path is unwrapped on its
+    // own; this stitches leg N's start to leg N-1's end).
+    let mut anchor_lon: Option<f64> = None;
 
     for i in 0..body.ports.len() - 1 {
         let from = body.ports[i];
@@ -214,9 +218,23 @@ async fn multi_route_handler(
                     "error": format!("No route for leg {}", i + 1)
                 }))).into_response();
             }
-            Some(route) => {
+            Some(mut route) => {
+                // Shift this whole leg by a multiple of 360° so its first point
+                // is within 180° of the previous leg's last point.
+                if let (Some(a), Some(first)) = (anchor_lon, route.path.first().copied()) {
+                    let mut shift = 0.0;
+                    let mut d = first[0] - a;
+                    while d > 180.0 { shift -= 360.0; d -= 360.0; }
+                    while d < -180.0 { shift += 360.0; d += 360.0; }
+                    if shift != 0.0 {
+                        for p in route.path.iter_mut() { p[0] += shift; }
+                    }
+                }
+
                 let los = los::simplify(&route.path, &state.classifier, 0.5);
                 let final_path = chaikin_smooth(&los, 4, &state.classifier);
+
+                anchor_lon = final_path.last().or_else(|| route.path.last()).map(|p| p[0]);
 
                 let skip = if i == 0 { 0 } else { 1 };
                 raw_all.extend_from_slice(&route.path[skip..]);
