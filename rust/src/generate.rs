@@ -161,7 +161,20 @@ fn classify_cell(
         }
     }
 
-    if land_count == 0 { CellType::Water } else { CellType::Land }
+    if land_count == 0 {
+        // Grid sampling hit only water, but a land ring overlaps this cell
+        // (we passed the overlaps_land fast-path). If it's a small island-scale
+        // feature, the coarse 0.25° grid almost certainly stepped over it —
+        // force subdivision instead of declaring open ocean, so tiny islands
+        // like Bermuda still produce nearby water nodes to route through.
+        if classifier.has_island_feature(min_lon, min_lat, max_lon, max_lat, 1.0) {
+            CellType::Mixed
+        } else {
+            CellType::Water
+        }
+    } else {
+        CellType::Land
+    }
 }
 
 /// Coarsen open-water cells: merge 4 water siblings when none border land.

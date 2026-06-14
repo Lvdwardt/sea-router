@@ -235,4 +235,58 @@ impl LandClassifier {
         let envelope = AABB::from_corners([min_lon, min_lat], [max_lon, max_lat]);
         self.tree.locate_in_envelope_intersecting(&envelope).next().is_some()
     }
+
+    /// True if a *small* (island-scale) land ring intersects the cell — i.e. a
+    /// ring whose own bounding box is at most `max_feature_deg` across. Used by
+    /// the quadtree to force subdivision around small islands (e.g. Bermuda)
+    /// that the coarse grid-sampling in `classify_cell` would otherwise step
+    /// over and swallow into open ocean. Big continental rings are ignored here
+    /// (their large bbox exceeds the threshold), so this never over-subdivides
+    /// open water that merely clips a continent's bbox corner.
+    pub fn has_island_feature(
+        &self,
+        min_lon: f64, min_lat: f64,
+        max_lon: f64, max_lat: f64,
+        max_feature_deg: f64,
+    ) -> bool {
+        let envelope = AABB::from_corners([min_lon, min_lat], [max_lon, max_lat]);
+        self.tree
+            .locate_in_envelope_intersecting(&envelope)
+            .any(|e| (e.max_lon - e.min_lon).max(e.max_lat - e.min_lat) <= max_feature_deg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_file(name: &str, contents: &str) -> String {
+        let mut path = std::env::temp_dir();
+        path.push(name);
+        fs::write(&path, contents).unwrap();
+        let _ = fs::remove_file(format!("{}.raster", path.to_str().unwrap()));
+        path.to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn island_feature_detected_only_for_small_rings() {
+        // A small island (~0.1°) near (10,10) and a large landmass (~6°) near (50,0).
+        let geo = r#"{"features":[
+            {"geometry":{"type":"Polygon","coordinates":[[[10.0,10.0],[10.1,10.0],[10.1,10.1],[10.0,10.1],[10.0,10.0]]]}},
+            {"geometry":{"type":"Polygon","coordinates":[[[50.0,0.0],[56.0,0.0],[56.0,6.0],[50.0,6.0],[50.0,0.0]]]}}
+        ]}"#;
+        let p = temp_file("land_test_islands.geojson.json", geo);
+        let c = LandClassifier::load(&p).unwrap();
+
+        // Cell over the small island → island feature present.
+        assert!(c.has_island_feature(9.5, 9.5, 10.5, 10.5, 1.0),
+            "small island ring must be detected");
+        // Cell over the large landmass → ring too big to count as an island.
+        assert!(!c.has_island_feature(49.0, -1.0, 57.0, 7.0, 1.0),
+            "large continental ring must NOT trip the island detector");
+        // Open ocean far from any land → nothing.
+        assert!(!c.has_island_feature(-30.0, -30.0, -29.0, -29.0, 1.0),
+            "open ocean must have no island feature");
+    }
 }
