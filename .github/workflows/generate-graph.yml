@@ -12,6 +12,8 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -69,12 +71,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="graph-depth-${{ inputs.depth || '16' }}"
-          # Delete existing release if it exists
-          gh release delete "$TAG" --yes 2>/dev/null || true
-          # Create new release
-          gh release create "$TAG" \
-            --title "Routing Graph (depth ${{ inputs.depth || '16' }})" \
-            --notes "Pre-generated sea routing graph at depth ${{ inputs.depth || '16' }}. Used by the Docker build." \
-            --latest=false \
-            data/graph/sea-graph.json.gz
+          # Create the release if missing, then upload the asset (overwriting
+          # any existing one). Idempotent — no delete/recreate race.
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "Routing Graph (depth ${{ inputs.depth || '16' }})" \
+              --notes "Pre-generated sea routing graph at depth ${{ inputs.depth || '16' }}. Used by the Docker build." \
+              --latest=false
+          gh release upload "$TAG" data/graph/sea-graph.json.gz --clobber
           echo "✅ Graph uploaded to release: $TAG"
