@@ -1,6 +1,6 @@
 # 🌊 Sea Router
 
-Generates realistic-looking maritime routes between any two ports on Earth for display on maps. Routes avoid land, traverse canals (Suez, Panama, Kiel), and produce smooth, map-ready GeoJSON polylines.
+Generates realistic-looking maritime routes between any two ports on Earth for display on maps. Routes avoid land, traverse canals (Suez, Panama, Corinth), and produce smooth, map-ready GeoJSON polylines.
 
 ## Prerequisites
 
@@ -70,7 +70,7 @@ curl -X POST http://localhost:3001/route/multi \
 │  Coarsening (merge open-ocean cells)        │
 │  ↓                                          │
 │  Adjacency graph (CSR format)               │
-│  + Canal waypoints (Suez, Panama, Kiel)     │
+│  + Canal waypoints (Suez, Panama, Corinth)  │
 │  ↓                                          │
 │  A* pathfinding + coastal penalty           │
 │  ↓                                          │
@@ -87,7 +87,7 @@ curl -X POST http://localhost:3001/route/multi \
 - **Lazy raster cache** — `is_land()` becomes O(1) after first query per cell
 - **Douglas-Peucker compression** — reduces raw A* paths by 50%+
 - **Segmented bbox rejection** — skips open-ocean LOS checks entirely
-- **Canal injection** — manual waypoints for Suez, Panama, and Kiel canals
+- **Canal injection** — manual waypoints for Suez, Panama, and Corinth canals
 
 ## Performance
 

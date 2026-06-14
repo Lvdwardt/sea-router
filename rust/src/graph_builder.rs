@@ -31,11 +31,14 @@ impl RTreeObject for CellEntry {
     }
 }
 
-/// Haversine distance in km.
+/// Haversine distance in km. Longitude delta is wrapped to the short way
+/// around the globe so antimeridian-straddling pairs measure correctly.
 fn haversine_km(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
     let r = 6371.0;
     let dlat = (lat2 - lat1).to_radians();
-    let dlon = (lon2 - lon1).to_radians();
+    let mut dlon = (lon2 - lon1).abs() % 360.0;
+    if dlon > 180.0 { dlon = 360.0 - dlon; }
+    let dlon = dlon.to_radians();
     let a = (dlat / 2.0).sin().powi(2)
         + lat1.to_radians().cos() * lat2.to_radians().cos() * (dlon / 2.0).sin().powi(2);
     r * 2.0 * a.sqrt().asin()
@@ -187,6 +190,51 @@ pub fn build_graph(leaves: &[WaterLeaf], classifier: &LandClassifier) -> GraphOu
         "  Base graph: {} nodes, {} edges in {:.1}s",
         nodes.len(), raw_edges.len(),
         t0.elapsed().as_secs_f64()
+    );
+
+    // ── Stitch the antimeridian (±180°) ──
+    // The quadtree spans lon [-180, 180]; cells touching the +180 edge and
+    // cells touching the -180 edge never overlap in longitude, so the normal
+    // adjacency pass never links them. Without this, the Pacific graph is
+    // severed down the dateline and routes (e.g. Australia → San Francisco)
+    // are forced the long way around the globe. Here we connect every
+    // east-seam cell to each lat-overlapping west-seam cell whose wrapped
+    // edge stays in water.
+    println!("  Stitching antimeridian seam...");
+    let seam_eps = 1e-6;
+    let east_seam: Vec<usize> = (0..leaves.len())
+        .filter(|&i| leaves[i].max_lon >= 180.0 - seam_eps)
+        .collect();
+    let west_seam: Vec<usize> = (0..leaves.len())
+        .filter(|&i| leaves[i].min_lon <= -180.0 + seam_eps)
+        .collect();
+    let mut seam_edges_added = 0usize;
+
+    for &i in &east_seam {
+        let e = &leaves[i];
+        for &j in &west_seam {
+            let w = &leaves[j];
+            // Latitude bands must overlap to be neighbours across the seam.
+            if e.min_lat >= w.max_lat || w.min_lat >= e.max_lat { continue; }
+
+            let n1 = &nodes[i];
+            let n2 = &nodes[j];
+            // Shift the west node +360° so the pair is contiguous east of +180,
+            // letting the planar land-sampler walk the short way over the seam.
+            let n2_lon_adj = n2.lon + 360.0;
+            if edge_crosses_land(n1.lon, n1.lat, n2_lon_adj, n2.lat, classifier) {
+                continue;
+            }
+
+            let dist = haversine_km(n1.lon, n1.lat, n2.lon, n2.lat);
+            raw_edges.push((i as u32, j as u32, dist));
+            seam_edges_added += 1;
+        }
+    }
+
+    println!(
+        "  Seam: {} east + {} west cells, {} edges added",
+        east_seam.len(), west_seam.len(), seam_edges_added
     );
 
     // Pack into flat arrays

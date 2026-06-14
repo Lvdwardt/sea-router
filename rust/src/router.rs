@@ -112,6 +112,7 @@ impl Router {
                     id = cf as usize;
                 }
                 path.reverse();
+                unwrap_lons(&mut path);
                 return Some(RouteResult {
                     path: douglas_peucker(&path, 0.01),
                     distance_km: self.entries[end].g_score,
@@ -156,12 +157,28 @@ impl Router {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Haversine distance in km.
+/// Make a path's longitudes continuous so no consecutive step jumps more than
+/// 180°. Antimeridian-crossing paths come out as e.g. 178 → 181 → 183 instead
+/// of 178 → -179 → -177, which keeps planar geometry (Douglas-Peucker, LOS,
+/// Chaikin) and MapLibre rendering from wrapping the wrong way around the map.
+pub fn unwrap_lons(path: &mut [[f64; 2]]) {
+    for i in 1..path.len() {
+        let mut d = path[i][0] - path[i - 1][0];
+        while d > 180.0 { path[i][0] -= 360.0; d -= 360.0; }
+        while d < -180.0 { path[i][0] += 360.0; d += 360.0; }
+    }
+}
+
+/// Haversine distance in km. Longitude delta is wrapped to the short way
+/// around the globe so points straddling the antimeridian (e.g. +179°/-179°)
+/// measure ~2° apart, not ~358°.
 #[inline]
 fn haversine_km(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
     let r = 6371.0_f64;
     let dlat = (lat2 - lat1).to_radians();
-    let dlon = (lon2 - lon1).to_radians();
+    let mut dlon = (lon2 - lon1).abs() % 360.0;
+    if dlon > 180.0 { dlon = 360.0 - dlon; }
+    let dlon = dlon.to_radians();
     let lat1r = lat1.to_radians();
     let lat2r = lat2.to_radians();
     let a = (dlat / 2.0).sin().powi(2)

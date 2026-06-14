@@ -215,8 +215,13 @@ impl LandClassifier {
     pub fn ring_count(&self) -> usize { 0 }
 
     /// O(1) bitmap lookup — ~1ns per call.
+    /// Longitude is normalized into [-180, 180) so callers may pass
+    /// "unwrapped" antimeridian-crossing coordinates (e.g. 181° → -179°).
     #[inline]
     pub fn is_land(&self, lon: f64, lat: f64) -> bool {
+        let mut lon = lon;
+        while lon >= 180.0 { lon -= 360.0; }
+        while lon < -180.0 { lon += 360.0; }
         let col = ((lon + 180.0) / RASTER_CELL) as usize;
         let row = ((lat + 90.0)  / RASTER_CELL) as usize;
         if col >= RASTER_COLS || row >= RASTER_ROWS { return false; }
