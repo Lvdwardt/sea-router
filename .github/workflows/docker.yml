@@ -1,7 +1,12 @@
-name: Build & Push Docker Image
+name: Build, Regen & Deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      regen_graph:
+        description: 'Force routing-graph regeneration before build'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -14,12 +19,63 @@ env:
   IMAGE_NAME: lvdwardt/sea-router
 
 jobs:
+  # Decide whether the routing graph must be regenerated. The graph is a pure
+  # function of the land data + the graph-shaping source; runtime-only changes
+  # (router/server/los) reuse the existing pre-built graph from the release.
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      regen: ${{ steps.decide.outputs.regen }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect graph-shaping changes
+        id: filter
+        if: github.event_name == 'push'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            graph:
+              - 'rust/src/generate.rs'
+              - 'rust/src/graph_builder.rs'
+              - 'rust/src/land.rs'
+              - 'rust/src/canals.rs'
+
+      - name: Decide
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.regen_graph }}" = "true" ]; then
+            echo "regen=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.filter.outputs.graph }}" = "true" ]; then
+            echo "regen=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "regen=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Conditional: regenerate the graph (builds the binary from this ref, so it
+  # picks up graph-shaping changes) and upload it to the graph-depth-16 release.
+  regen:
+    needs: detect
+    if: ${{ needs.detect.outputs.regen == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/generate-graph.yml
+    with:
+      depth: '16'
+    secrets: inherit
+
   build-and-push:
+    needs: [detect, regen]
+    # Run after detect always, and after regen unless it actually failed. When
+    # regen is skipped (runtime-only change) we build with the existing graph.
+    if: ${{ always() && needs.detect.result == 'success' && (needs.regen.result == 'success' || needs.regen.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,3 +112,15 @@ jobs:
             .
           docker push "${TAG}:latest"
           docker push "${TAG}:${{ github.sha }}"
+
+  # Trigger Coolify to pull the new :latest image and redeploy.
+  deploy:
+    needs: build-and-push
+    if: ${{ needs.build-and-push.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify redeploy
+        run: |
+          curl -fsS \
+            -H "Authorization: Bearer ${{ secrets.DEPLOY_WEBHOOK_KEY }}" \
+            "https://coolify.cruisello.com/api/v1/deploy?uuid=kwkwswo4oc0cscws0cgsoccg&force=false"

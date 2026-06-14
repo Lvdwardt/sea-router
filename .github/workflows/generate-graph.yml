@@ -7,6 +7,14 @@ on:
         description: 'Quadtree depth (default: 16)'
         required: false
         default: '16'
+  # Reusable: called by the build/deploy pipeline when graph-shaping source
+  # changes, so the routing graph is regenerated before the image is built.
+  workflow_call:
+    inputs:
+      depth:
+        type: string
+        required: false
+        default: '16'
 
 jobs:
   generate:
