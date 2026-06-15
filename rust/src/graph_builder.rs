@@ -74,7 +74,11 @@ fn edge_crosses_land(
     let dlon = lon2 - lon1;
     let dlat = lat2 - lat1;
     let approx_km = (dlon * dlon + dlat * dlat).sqrt() * 111.0;
-    let n = 3usize.max((approx_km / 0.5).ceil() as usize); // 500m intervals
+    // Short edges are the dense island-area ones — sample them at ~50m so the
+    // precise center-line test catches thin land slits (causeways, isthmuses)
+    // it would otherwise step over. Long open-ocean edges stay at 500m (cheap).
+    let interval_km = if approx_km < 3.0 { 0.05 } else { 0.5 };
+    let n = 3usize.max((approx_km / interval_km).ceil() as usize);
 
     let line_len = (dlon * dlon + dlat * dlat).sqrt();
     if line_len < 1e-10 {
@@ -94,8 +98,12 @@ fn edge_crosses_land(
         let cx = lon1 + t * dlon;
         let cy = lat1 + t * dlat;
 
-        // Center line
-        if classifier.is_land(cx, cy) {
+        // Center line — precise near small islands so thin land slits (e.g.
+        // Cockburn Road on Bermuda's dockyard isthmus, ~50m wide) that the
+        // coarse 2.2km raster steps over still prune the edge. Away from
+        // islands is_land_precise falls back to the raster, so open-ocean edges
+        // pay only a cheap empty R-tree lookup.
+        if classifier.is_land_precise(cx, cy) {
             return true;
         }
         // ±1km band
@@ -407,7 +415,10 @@ fn segment_clear(classifier: &LandClassifier, a: [f64; 2], b: [f64; 2], shore_to
         }
         let lon = a[0] + t * (b[0] - a[0]);
         let lat = a[1] + t * (b[1] - a[1]);
-        if classifier.is_land(lon, lat) {
+        // Precise so a reconnection bridge can't be drawn across a thin land
+        // slit (which the raster steps over) — that would undo the precise
+        // edge pruning and re-cross land.
+        if classifier.is_land_precise(lon, lat) {
             return false;
         }
     }
@@ -479,7 +490,11 @@ fn reconnect_islands(
     // genuinely separate sea, not reconnecting a severed island. The land check
     // is the real correctness guard; this just bounds pathological links.
     const MAX_BRIDGE_KM: f64 = 3000.0;
-    const SHORE_TOL_KM: f64 = 2.0;
+    // Small tolerance: only the immediate node vicinity (water anyway) is
+    // skipped, so the precise land test actually sees a thin slit in the middle
+    // of a short cross-land bridge and rejects it. Larger values skipped the
+    // whole bridge and let bridges hop across narrow isthmuses.
+    const SHORE_TOL_KM: f64 = 0.3;
 
     // Per non-main component, keep the shortest clear bridge: (dist, island, main).
     let mut best: HashMap<u32, (f64, u32, u32)> = HashMap::new();
