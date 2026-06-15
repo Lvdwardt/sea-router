@@ -71,8 +71,8 @@ impl Router {
     ) -> Option<RouteResult> {
         let t0 = Instant::now();
 
-        let start = graph.find_nearest(from_lon, from_lat);
-        let end   = graph.find_nearest(to_lon, to_lat);
+        let start = snap_to_water(graph, classifier, from_lon, from_lat);
+        let end   = snap_to_water(graph, classifier, to_lon, to_lat);
 
         if start == end {
             // Both ports snap to the same graph node. Return the true port
@@ -189,18 +189,41 @@ pub fn unwrap_lons(path: &mut [[f64; 2]]) {
     }
 }
 
-/// Distance below which a connector sample is treated as "at the port" and its
-/// land hits are ignored. Ports sit on the coast, so the cell containing the
-/// port (and the immediate approach) often rasterizes as land — without this
-/// tolerance the connector to a coastal port would always be rejected.
-const SHORE_TOLERANCE_KM: f64 = 3.0;
+/// Distance from the port within which connector land hits are ignored. Ports
+/// sit on the coast, so the raster cell containing the port (and the last few
+/// hundred metres of approach) is often land — without this tolerance no
+/// connector to a coastal port would ever be accepted. Kept small (< the width
+/// of a typical island-tip port) so the connector still can't cut across an
+/// island body to reach a port on its far side.
+const SHORE_TOLERANCE_KM: f64 = 0.6;
+
+/// How many candidate nodes to consider when snapping a port to the graph.
+const SNAP_CANDIDATES: usize = 16;
+
+/// Snap a coordinate to the nearest connected graph node that the coordinate
+/// can reach over open water. The geometrically nearest node can sit on the
+/// wrong side of an island (e.g. Bermuda's dockyard faces NW, but the closest
+/// node is across the island to the SW), which would make the route cross land.
+/// Falls back to the geometrically nearest node if none has a clear connector.
+fn snap_to_water(
+    graph: &Graph,
+    classifier: &LandClassifier,
+    lon: f64, lat: f64,
+) -> usize {
+    let cands = graph.nearest_k(lon, lat, SNAP_CANDIDATES);
+    for &n in &cands {
+        if connector_clear(classifier, [graph.lon(n), graph.lat(n)], [lon, lat]) {
+            return n;
+        }
+    }
+    cands.first().copied().unwrap_or(0)
+}
 
 /// Prepend the real origin and append the real destination to a routed path
 /// when the straight connector from the snapped graph node to the true port
-/// stays in open water (ignoring land within `SHORE_TOLERANCE_KM` of the port
-/// itself, since ports are coastal). Returns the total km of connector added so
-/// the caller can keep `distance_km` honest. A connector that would cross land
-/// mid-segment is dropped, leaving the snapped node as the endpoint.
+/// stays in open water. Returns the km of connector added so the caller can
+/// keep `distance_km` honest. A connector that would cross land is dropped,
+/// leaving the snapped node as the endpoint.
 fn stitch_endpoints(
     path: &mut Vec<[f64; 2]>,
     classifier: &LandClassifier,
@@ -211,7 +234,7 @@ fn stitch_endpoints(
 
     if let Some(&first) = path.first() {
         let p = [from_lon, from_lat];
-        if !same_point(p, first) && connector_clear(classifier, p, first) {
+        if !same_point(p, first) && connector_clear(classifier, first, p) {
             extra += haversine_km(p[0], p[1], first[0], first[1]);
             path.insert(0, p);
         }
@@ -233,25 +256,29 @@ fn same_point(a: [f64; 2], b: [f64; 2]) -> bool {
     (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9
 }
 
-/// True if the straight segment a→b stays in water, sampled ~every 2km. Land
-/// hits within `SHORE_TOLERANCE_KM` of either endpoint are ignored so coastal
-/// ports remain reachable; interior land hits reject the connector.
-fn connector_clear(classifier: &LandClassifier, a: [f64; 2], b: [f64; 2]) -> bool {
-    let total = haversine_km(a[0], a[1], b[0], b[1]);
+/// True if the straight segment from a water node to a port stays in water,
+/// sampled ~every 1km. Land hits within `SHORE_TOLERANCE_KM` of the `port` end
+/// are ignored (the port is coastal); land anywhere else — e.g. an island body
+/// between the node and a port on its far side — rejects the connector.
+/// `water_node` is the offshore graph node, `port` is the true port coordinate.
+fn connector_clear(classifier: &LandClassifier, water_node: [f64; 2], port: [f64; 2]) -> bool {
+    let total = haversine_km(water_node[0], water_node[1], port[0], port[1]);
     if total < 1e-6 {
         return true;
     }
-    let n = ((total / 2.0).ceil() as usize).max(2);
+    let n = (total.ceil() as usize).max(2);
     for i in 0..=n {
         let t = i as f64 / n as f64;
-        let d_from_a = t * total;
-        let d_from_b = (1.0 - t) * total;
-        if d_from_a <= SHORE_TOLERANCE_KM || d_from_b <= SHORE_TOLERANCE_KM {
+        // Distance of this sample from the port end.
+        let d_from_port = (1.0 - t) * total;
+        if d_from_port <= SHORE_TOLERANCE_KM {
             continue;
         }
-        let lon = a[0] + t * (b[0] - a[0]);
-        let lat = a[1] + t * (b[1] - a[1]);
-        if classifier.is_land(lon, lat) {
+        let lon = water_node[0] + t * (port[0] - water_node[0]);
+        let lat = water_node[1] + t * (port[1] - water_node[1]);
+        // Precise polygon test: the coarse raster smears small islands (Bermuda)
+        // and would wrongly reject a clean connector or accept one that grazes.
+        if classifier.is_land_precise(lon, lat) {
             return false;
         }
     }

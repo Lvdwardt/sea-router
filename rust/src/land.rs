@@ -18,6 +18,35 @@ const RASTER_VERSION: u32 = 3;
 pub struct LandClassifier {
     tree: RTree<RingEntry>,
     raster: Vec<u64>,
+    /// Geometry of *small* (island-scale) rings only, for precise point-in-polygon
+    /// tests via `is_land_precise`. The 0.02° (~2.2km) raster smears tiny islands
+    /// (Bermuda), which breaks short port connectors; precise tests fix that.
+    /// Continental rings are excluded to bound memory (the full ring set is
+    /// ~300MB) — near big landmasses `is_land_precise` falls back to the raster,
+    /// which is accurate enough there.
+    island_rings: Vec<Ring>,
+    /// Spatial index over `island_rings` bboxes (value = index into island_rings).
+    island_tree: RTree<IslandRing>,
+}
+
+/// Max bbox span (degrees) for a ring to count as "island-scale" and be kept
+/// for precise tests. Comfortably covers small islands (Bermuda ≈ 0.3°) while
+/// excluding continents and large landmasses.
+const ISLAND_MAX_DEG: f64 = 3.0;
+
+pub struct IslandRing {
+    pub ring_idx: usize,
+    pub min_lon: f64,
+    pub min_lat: f64,
+    pub max_lon: f64,
+    pub max_lat: f64,
+}
+
+impl RTreeObject for IslandRing {
+    type Envelope = AABB<[f64; 2]>;
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_corners([self.min_lon, self.min_lat], [self.max_lon, self.max_lat])
+    }
 }
 
 pub struct RingEntry {
@@ -63,6 +92,9 @@ impl LandClassifier {
         // Collect all rings (exterior + holes) for R-tree and scanline rasterization.
         let mut all_rings: Vec<Ring> = Vec::new();
         let mut entries = Vec::new();
+        // Island-scale rings only, kept in memory for precise point-in-polygon.
+        let mut island_rings: Vec<Ring> = Vec::new();
+        let mut island_entries: Vec<IslandRing> = Vec::new();
 
         for feature in &geojson.features {
             let polygon_groups = match &feature.geometry {
@@ -88,11 +120,19 @@ impl LandClassifier {
                     let idx = all_rings.len();
                     entries.push(RingEntry { idx, min_lon, min_lat, max_lon, max_lat });
                     all_rings.push(ring_coords.clone());
+
+                    // Keep island-scale rings for precise point-in-polygon tests.
+                    if (max_lon - min_lon).max(max_lat - min_lat) <= ISLAND_MAX_DEG {
+                        let ring_idx = island_rings.len();
+                        island_rings.push(ring_coords.clone());
+                        island_entries.push(IslandRing { ring_idx, min_lon, min_lat, max_lon, max_lat });
+                    }
                 }
             }
         }
 
         let tree = RTree::bulk_load(entries);
+        let island_tree = RTree::bulk_load(island_entries);
 
         // Try loading cached raster first
         let raster_path = format!("{}.raster", path);
@@ -114,7 +154,8 @@ impl LandClassifier {
             raster
         };
 
-        Ok(LandClassifier { tree, raster })
+        println!("  {} island-scale rings kept for precise tests", island_rings.len());
+        Ok(LandClassifier { tree, raster, island_rings, island_tree })
     }
 
     /// Scanline rasterization using even-odd rule.
@@ -234,6 +275,48 @@ impl LandClassifier {
     pub fn overlaps_land(&self, min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> bool {
         let envelope = AABB::from_corners([min_lon, min_lat], [max_lon, max_lat]);
         self.tree.locate_in_envelope_intersecting(&envelope).next().is_some()
+    }
+
+    /// Land test that is precise near small islands and raster-backed elsewhere.
+    ///
+    /// Tiny islands (Bermuda) are smeared by the 0.02° (~2.2km) raster, which
+    /// breaks short port connectors. Here we run an exact even-odd
+    /// point-in-polygon against the kept island-scale rings; if the point sits
+    /// inside one it's land. If no island ring covers the point we fall back to
+    /// the raster `is_land` — accurate enough away from tiny features (e.g. on
+    /// continental coasts) and cheap. Holes cancel exterior rings via the shared
+    /// even-odd toggle, matching the raster fill.
+    pub fn is_land_precise(&self, lon: f64, lat: f64) -> bool {
+        let envelope = AABB::from_corners([lon, lat], [lon, lat]);
+        let mut inside = false;
+        let mut tested_any = false;
+        for e in self.island_tree.locate_in_envelope_intersecting(&envelope) {
+            tested_any = true;
+            let ring = &self.island_rings[e.ring_idx];
+            let n = ring.len();
+            if n < 3 { continue; }
+            let mut j = n - 1;
+            for i in 0..n {
+                let (xi, yi) = (ring[i][0], ring[i][1]);
+                let (xj, yj) = (ring[j][0], ring[j][1]);
+                if (yi > lat) != (yj > lat) {
+                    let x_cross = (xj - xi) * (lat - yi) / (yj - yi) + xi;
+                    if lon < x_cross {
+                        inside = !inside;
+                    }
+                }
+                j = i;
+            }
+        }
+        if tested_any {
+            // Island rings are near: trust the exact result (this is exactly
+            // where the raster is wrong). `inside` is land, outside is water.
+            inside
+        } else {
+            // No island-scale ring here: fall back to the raster for
+            // continental-scale land.
+            self.is_land(lon, lat)
+        }
     }
 
     /// True if a *small* (island-scale) land ring intersects the cell — i.e. a

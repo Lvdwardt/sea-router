@@ -206,6 +206,17 @@ impl Graph {
             .unwrap_or(0)
     }
 
+    /// The `k` nearest connected nodes, increasing distance. Used to pick a snap
+    /// node that the target can actually reach over water (the geometrically
+    /// nearest node can sit on the far side of an island from a port).
+    pub fn nearest_k(&self, lon: f64, lat: f64, k: usize) -> Vec<usize> {
+        self.spatial
+            .nearest_neighbor_iter(&[lon, lat])
+            .take(k)
+            .map(|e| e.id as usize)
+            .collect()
+    }
+
     /// Iterate edges of a node.
     #[inline]
     pub fn edges(&self, node: usize) -> impl Iterator<Item = (usize, f32, f32)> + '_ {
