@@ -1,0 +1,1099 @@
+{
+ "type": "FeatureCollection",
+ "_comment": "Hand-drawn corridors for ports the generator cannot reach automatically: Natural Earth river centerlines stop at the head of each estuary, and the simplified land polygons seal the estuary itself. Points follow the navigable channel from the berth out to open water. Takes precedence over build-waterways.py output for the named port.",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Hamburg",
+    "name": "Hamburg - Lower Elbe",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      10.0051,
+      53.5395
+     ],
+     [
+      9.934,
+      53.543
+     ],
+     [
+      9.8,
+      53.56
+     ],
+     [
+      9.66,
+      53.59
+     ],
+     [
+      9.55,
+      53.63
+     ],
+     [
+      9.39,
+      53.73
+     ],
+     [
+      9.24,
+      53.83
+     ],
+     [
+      9.14,
+      53.89
+     ],
+     [
+      8.97,
+      53.89
+     ],
+     [
+      8.8,
+      53.88
+     ],
+     [
+      8.72,
+      53.87
+     ],
+     [
+      8.55,
+      53.93
+     ],
+     [
+      8.35,
+      54.05
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "London-Tilbury",
+    "name": "Tilbury - Thames Estuary",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      0.3472,
+      51.4608
+     ],
+     [
+      0.46,
+      51.455
+     ],
+     [
+      0.55,
+      51.465
+     ],
+     [
+      0.69,
+      51.465
+     ],
+     [
+      0.8,
+      51.45
+     ],
+     [
+      0.95,
+      51.46
+     ],
+     [
+      1.08,
+      51.5
+     ],
+     [
+      1.25,
+      51.55
+     ],
+     [
+      1.45,
+      51.6
+     ],
+     [
+      1.7,
+      51.65
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Philadelphia",
+    "name": "Philadelphia - Delaware River and Bay",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -75.1361,
+      39.9309
+     ],
+     [
+      -75.22,
+      39.87
+     ],
+     [
+      -75.34,
+      39.8
+     ],
+     [
+      -75.42,
+      39.74
+     ],
+     [
+      -75.51,
+      39.63
+     ],
+     [
+      -75.53,
+      39.52
+     ],
+     [
+      -75.46,
+      39.42
+     ],
+     [
+      -75.38,
+      39.33
+     ],
+     [
+      -75.27,
+      39.19
+     ],
+     [
+      -75.17,
+      39.05
+     ],
+     [
+      -75.08,
+      38.9
+     ],
+     [
+      -75.03,
+      38.8
+     ],
+     [
+      -74.96,
+      38.75
+     ],
+     [
+      -74.8,
+      38.7
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Quebec City",
+    "name": "Quebec - St Lawrence",
+    "halfWidthKm": 1.5
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -71.2007,
+      46.8155
+     ],
+     [
+      -71.05,
+      46.86
+     ],
+     [
+      -70.8,
+      47.0
+     ],
+     [
+      -70.5,
+      47.1
+     ],
+     [
+      -70.1,
+      47.26
+     ],
+     [
+      -69.7,
+      47.45
+     ],
+     [
+      -69.3,
+      47.65
+     ],
+     [
+      -68.8,
+      47.9
+     ],
+     [
+      -68.3,
+      48.15
+     ],
+     [
+      -67.8,
+      48.35
+     ],
+     [
+      -67.2,
+      48.55
+     ],
+     [
+      -66.5,
+      48.8
+     ],
+     [
+      -65.8,
+      49.0
+     ],
+     [
+      -65.0,
+      49.2
+     ],
+     [
+      -64.2,
+      49.3
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Montreal",
+    "name": "Montreal - St Lawrence",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -73.5464,
+      45.5067
+     ],
+     [
+      -73.45,
+      45.58
+     ],
+     [
+      -73.25,
+      45.68
+     ],
+     [
+      -73.05,
+      45.78
+     ],
+     [
+      -72.8,
+      45.9
+     ],
+     [
+      -72.5,
+      46.02
+     ],
+     [
+      -72.1,
+      46.16
+     ],
+     [
+      -71.8,
+      46.3
+     ],
+     [
+      -71.5,
+      46.5
+     ],
+     [
+      -71.3,
+      46.68
+     ],
+     [
+      -71.2007,
+      46.8155
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Saguenay",
+    "name": "Saguenay - Saguenay Fjord",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -71.0639,
+      48.4302
+     ],
+     [
+      -71.0,
+      48.42
+     ],
+     [
+      -70.9,
+      48.4
+     ],
+     [
+      -70.75,
+      48.34
+     ],
+     [
+      -70.5,
+      48.26
+     ],
+     [
+      -70.25,
+      48.22
+     ],
+     [
+      -70.05,
+      48.17
+     ],
+     [
+      -69.9,
+      48.13
+     ],
+     [
+      -69.7,
+      48.1
+     ],
+     [
+      -69.5,
+      48.05
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Amsterdam",
+    "name": "Amsterdam - North Sea Canal",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      4.9302,
+      52.3773
+     ],
+     [
+      4.88,
+      52.39
+     ],
+     [
+      4.82,
+      52.41
+     ],
+     [
+      4.74,
+      52.43
+     ],
+     [
+      4.66,
+      52.45
+     ],
+     [
+      4.6,
+      52.46
+     ],
+     [
+      4.56,
+      52.46
+     ],
+     [
+      4.5,
+      52.465
+     ],
+     [
+      4.38,
+      52.47
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Manaus",
+    "name": "Manaus - Amazon",
+    "halfWidthKm": 1.5
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -60.0238,
+      -3.1315
+     ],
+     [
+      -59.8,
+      -3.14
+     ],
+     [
+      -59.5,
+      -3.1
+     ],
+     [
+      -59.2,
+      -3.1
+     ],
+     [
+      -58.9,
+      -3.05
+     ],
+     [
+      -58.5,
+      -2.9
+     ],
+     [
+      -58.1,
+      -2.8
+     ],
+     [
+      -57.6,
+      -2.7
+     ],
+     [
+      -57.2,
+      -2.65
+     ],
+     [
+      -56.7344,
+      -2.6186
+     ],
+     [
+      -56.4478,
+      -2.4026
+     ],
+     [
+      -56.0,
+      -2.35
+     ],
+     [
+      -55.5,
+      -2.35
+     ],
+     [
+      -55.0,
+      -2.38
+     ],
+     [
+      -54.7332,
+      -2.403
+     ],
+     [
+      -54.3,
+      -2.25
+     ],
+     [
+      -53.9,
+      -2.2
+     ],
+     [
+      -53.4,
+      -2.1
+     ],
+     [
+      -52.9,
+      -1.8
+     ],
+     [
+      -52.4,
+      -1.6
+     ],
+     [
+      -51.9,
+      -1.35
+     ],
+     [
+      -51.4,
+      -1.0
+     ],
+     [
+      -51.0,
+      -0.7
+     ],
+     [
+      -50.6,
+      -0.4
+     ],
+     [
+      -50.2,
+      -0.2
+     ],
+     [
+      -49.8,
+      -0.1
+     ],
+     [
+      -49.3,
+      -0.05
+     ],
+     [
+      -49.0,
+      -0.05
+     ],
+     [
+      -48.6,
+      -0.05
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Santarem",
+    "name": "Santarem - Amazon",
+    "halfWidthKm": 1.5
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -54.7332,
+      -2.403
+     ],
+     [
+      -54.5,
+      -2.3
+     ],
+     [
+      -54.3,
+      -2.25
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Parintins",
+    "name": "Parintins - Amazon",
+    "halfWidthKm": 1.5
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -56.7344,
+      -2.6186
+     ],
+     [
+      -56.6,
+      -2.5
+     ],
+     [
+      -56.4478,
+      -2.4026
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Boca da Valeria",
+    "name": "Boca da Valeria - Amazon",
+    "halfWidthKm": 1.5
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -56.4478,
+      -2.4026
+     ],
+     [
+      -56.2,
+      -2.38
+     ],
+     [
+      -56.0,
+      -2.35
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Macapa",
+    "name": "Macapa - Amazon north channel",
+    "halfWidthKm": 1.5
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -51.0498,
+      0.0328
+     ],
+     [
+      -50.8,
+      0.05
+     ],
+     [
+      -50.5,
+      0.1
+     ],
+     [
+      -50.2,
+      0.2
+     ],
+     [
+      -49.9,
+      0.3
+     ],
+     [
+      -49.5,
+      0.4
+     ],
+     [
+      -49.0,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Belem",
+    "name": "Belem - Para River",
+    "halfWidthKm": 1.5
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -48.4957,
+      -1.4407
+     ],
+     [
+      -48.48,
+      -1.3
+     ],
+     [
+      -48.45,
+      -1.1
+     ],
+     [
+      -48.4,
+      -0.9
+     ],
+     [
+      -48.35,
+      -0.7
+     ],
+     [
+      -48.3,
+      -0.5
+     ],
+     [
+      -48.25,
+      -0.3
+     ],
+     [
+      -48.2,
+      -0.1
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Ho Chi Minh City (Saigon)",
+    "name": "Saigon River",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      106.741,
+      10.7548
+     ],
+     [
+      106.78,
+      10.73
+     ],
+     [
+      106.8,
+      10.68
+     ],
+     [
+      106.78,
+      10.63
+     ],
+     [
+      106.76,
+      10.58
+     ],
+     [
+      106.8,
+      10.52
+     ],
+     [
+      106.86,
+      10.47
+     ],
+     [
+      106.92,
+      10.42
+     ],
+     [
+      106.98,
+      10.38
+     ],
+     [
+      107.05,
+      10.33
+     ],
+     [
+      107.15,
+      10.25
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Busselton",
+    "name": "Busselton - Geographe Bay",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      115.603,
+      -33.7313
+     ],
+     [
+      115.59,
+      -33.65
+     ],
+     [
+      115.56,
+      -33.55
+     ],
+     [
+      115.5,
+      -33.4
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Norfolk",
+    "name": "Norfolk - Hampton Roads",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -76.2956,
+      36.8469
+     ],
+     [
+      -76.33,
+      36.9
+     ],
+     [
+      -76.3,
+      36.95
+     ],
+     [
+      -76.2,
+      36.98
+     ],
+     [
+      -76.05,
+      37.0
+     ],
+     [
+      -75.9,
+      36.95
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Djupivogur",
+    "name": "Djupivogur approach",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -14.7593,
+      64.6543
+     ],
+     [
+      -14.65,
+      64.63
+     ],
+     [
+      -14.5,
+      64.6
+     ],
+     [
+      -14.3,
+      64.57
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Santa Cruz Island",
+    "name": "Academy Bay approach",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -90.3639,
+      -0.6288
+     ],
+     [
+      -90.33,
+      -0.7
+     ],
+     [
+      -90.3,
+      -0.78
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Isabela Island",
+    "name": "Puerto Villamil approach",
+    "halfWidthKm": 1.2
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -91.0892,
+      -0.4456
+     ],
+     [
+      -91.12,
+      -0.52
+     ],
+     [
+      -91.16,
+      -0.6
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Espanola Island",
+    "name": "Espanola Island approach",
+    "kind": "approach",
+    "halfWidthKm": 1.0
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -89.6811,
+      -1.37799
+     ],
+     [
+      -89.68737,
+      -1.40139
+     ],
+     [
+      -89.69203,
+      -1.41876
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Hiroshima",
+    "name": "Hiroshima approach",
+    "kind": "approach",
+    "halfWidthKm": 1.0
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      132.454,
+      34.3712
+     ],
+     [
+      132.454,
+      34.35884
+     ],
+     [
+      132.454,
+      34.34085
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Hydra",
+    "name": "Hydra approach",
+    "kind": "approach",
+    "halfWidthKm": 1.0
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      23.4664,
+      37.3321
+     ],
+     [
+      23.4664,
+      37.31974
+     ],
+     [
+      23.4664,
+      37.30175
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Mobile",
+    "name": "Mobile approach",
+    "kind": "approach",
+    "halfWidthKm": 1.0
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -88.0399,
+      30.6954
+     ],
+     [
+      -88.01998,
+      30.67827
+     ],
+     [
+      -88.00519,
+      30.66555
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Newcastle",
+    "name": "Newcastle approach",
+    "kind": "approach",
+    "halfWidthKm": 1.0
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      151.781,
+      -32.9242
+     ],
+     [
+      151.80091,
+      -32.92868
+     ],
+     [
+      151.82161,
+      -32.93334
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Santos",
+    "name": "Santos approach",
+    "kind": "approach",
+    "halfWidthKm": 1.0
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -46.3021,
+      -23.968
+     ],
+     [
+      -46.32506,
+      -23.98011
+     ],
+     [
+      -46.34211,
+      -23.9891
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "port": "Zeebrugge",
+    "name": "Zeebrugge approach",
+    "kind": "approach",
+    "halfWidthKm": 1.0
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      3.19943,
+      51.3442
+     ],
+     [
+      3.2066,
+      51.36091
+     ],
+     [
+      3.21405,
+      51.37828
+     ]
+    ]
+   }
+  }
+ ]
+}

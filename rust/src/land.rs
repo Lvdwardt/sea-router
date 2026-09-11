@@ -13,26 +13,69 @@ const RASTER_CELL: f64 = 0.02;
 const RASTER_COLS: usize = (360.0 / RASTER_CELL) as usize; // 18,000
 const RASTER_ROWS: usize = (180.0 / RASTER_CELL) as usize; //  9,000
 const RASTER_MAGIC: u64 = 0x5345415F52415354; // "SEA_RAST"
-const RASTER_VERSION: u32 = 3;
+const RASTER_VERSION: u32 = 4;
 
 pub struct LandClassifier {
     tree: RTree<RingEntry>,
     raster: Vec<u64>,
-    /// Geometry of *small* (island-scale) rings only, for precise point-in-polygon
+    /// Geometry of *small* (island-scale) rings, for precise point-in-polygon
     /// tests via `is_land_precise`. The 0.02° (~2.2km) raster smears tiny islands
     /// (Bermuda), which breaks short port connectors; precise tests fix that.
-    /// Continental rings are excluded to bound memory (the full ring set is
-    /// ~300MB) — near big landmasses `is_land_precise` falls back to the raster,
-    /// which is accurate enough there.
     island_rings: Vec<Ring>,
     /// Spatial index over `island_rings` bboxes (value = index into island_rings).
     island_tree: RTree<IslandRing>,
+    /// Geometry of the rings too big to bbox-test cheaply — the continents.
+    /// Indexing these per ring is useless (one bbox covers Eurasia), so they are
+    /// indexed per segment in `coast_segs` and tested by ray casting.
+    coast_rings: Vec<Ring>,
+    /// Spatial index over every segment of every ring in `coast_rings`.
+    coast_segs: RTree<CoastSeg>,
+    /// Segments of every carved corridor, for the "is this explicit water"
+    /// test. Empty when there is no waterways.geojson.
+    corridor_segs: RTree<CorridorSeg>,
 }
 
-/// Max bbox span (degrees) for a ring to count as "island-scale" and be kept
-/// for precise tests. Comfortably covers small islands (Bermuda ≈ 0.3°) while
-/// excluding continents and large landmasses.
+/// One segment of a carved corridor centerline, with the corridor's half-width.
+pub struct CorridorSeg {
+    pub a: [f64; 2],
+    pub b: [f64; 2],
+    pub half_width_deg_lat: f64,
+    min_lon: f64,
+    min_lat: f64,
+    max_lon: f64,
+    max_lat: f64,
+}
+
+impl RTreeObject for CorridorSeg {
+    type Envelope = AABB<[f64; 2]>;
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_corners([self.min_lon, self.min_lat], [self.max_lon, self.max_lat])
+    }
+}
+
+/// Max bbox span (degrees) for a ring to count as "island-scale" and be tested
+/// by whole-ring containment. Comfortably covers small islands (Bermuda ≈ 0.3°).
+/// Bigger rings are the continents and get the per-segment ray cast instead.
 const ISLAND_MAX_DEG: f64 = 3.0;
+
+/// One segment of a continental ring, indexed by its own bounding box so a ray
+/// cast only touches the segments it could possibly cross.
+pub struct CoastSeg {
+    pub ring_idx: u32,
+    /// Index of the segment's first vertex; the second is `i + 1`.
+    pub i: u32,
+    pub min_lon: f64,
+    pub min_lat: f64,
+    pub max_lon: f64,
+    pub max_lat: f64,
+}
+
+impl RTreeObject for CoastSeg {
+    type Envelope = AABB<[f64; 2]>;
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_corners([self.min_lon, self.min_lat], [self.max_lon, self.max_lat])
+    }
+}
 
 pub struct IslandRing {
     pub ring_idx: usize,
@@ -92,9 +135,12 @@ impl LandClassifier {
         // Collect all rings (exterior + holes) for R-tree and scanline rasterization.
         let mut all_rings: Vec<Ring> = Vec::new();
         let mut entries = Vec::new();
-        // Island-scale rings only, kept in memory for precise point-in-polygon.
+        // Island-scale rings, kept in memory for precise point-in-polygon.
         let mut island_rings: Vec<Ring> = Vec::new();
         let mut island_entries: Vec<IslandRing> = Vec::new();
+        // Continental rings, indexed per segment for ray casting.
+        let mut coast_rings: Vec<Ring> = Vec::new();
+        let mut coast_entries: Vec<CoastSeg> = Vec::new();
 
         for feature in &geojson.features {
             let polygon_groups = match &feature.geometry {
@@ -126,6 +172,24 @@ impl LandClassifier {
                         let ring_idx = island_rings.len();
                         island_rings.push(ring_coords.clone());
                         island_entries.push(IslandRing { ring_idx, min_lon, min_lat, max_lon, max_lat });
+                    } else {
+                        let ring_idx = coast_rings.len() as u32;
+                        for i in 0..ring_coords.len() - 1 {
+                            let (a, b) = (ring_coords[i], ring_coords[i + 1]);
+                            // Segments spanning more than half the globe are
+                            // antimeridian wrap artifacts (Antarctica). A ray
+                            // cast cannot interpret them; drop them.
+                            if (a[0] - b[0]).abs() > 180.0 { continue; }
+                            coast_entries.push(CoastSeg {
+                                ring_idx,
+                                i: i as u32,
+                                min_lon: a[0].min(b[0]),
+                                min_lat: a[1].min(b[1]),
+                                max_lon: a[0].max(b[0]),
+                                max_lat: a[1].max(b[1]),
+                            });
+                        }
+                        coast_rings.push(ring_coords.clone());
                     }
                 }
             }
@@ -133,10 +197,21 @@ impl LandClassifier {
 
         let tree = RTree::bulk_load(entries);
         let island_tree = RTree::bulk_load(island_entries);
+        let coast_seg_count = coast_entries.len();
+        let coast_segs = RTree::bulk_load(coast_entries);
+
+        // Navigable corridors the polygons do not model. Looked up next to the
+        // land file so `generate` and `serve` always agree on them.
+        let ways_path = std::path::Path::new(path)
+            .parent()
+            .map(|d| d.join("waterways.geojson").to_string_lossy().into_owned())
+            .unwrap_or_else(|| "waterways.geojson".into());
+        let ways = crate::waterways::load(&ways_path).unwrap_or_default();
+        let ways_fp = crate::waterways::fingerprint(&ways_path);
 
         // Try loading cached raster first
         let raster_path = format!("{}.raster", path);
-        let raster = if let Ok(cached) = Self::load_raster_cache(&raster_path) {
+        let raster = if let Ok(cached) = Self::load_raster_cache(&raster_path, ways_fp) {
             println!("  Land raster loaded from cache ({} MB).",
                 (cached.len() * 8) / 1_048_576);
             cached
@@ -144,9 +219,17 @@ impl LandClassifier {
             println!("  Building land raster {}×{} = {}M cells via scanline (one-time, ~5-15s)...",
                 RASTER_COLS, RASTER_ROWS, (RASTER_COLS * RASTER_ROWS) / 1_000_000);
 
-            let raster = Self::build_raster_scanline(&all_rings);
+            let mut raster = Self::build_raster_scanline(&all_rings);
 
-            if let Err(e) = Self::save_raster_cache(&raster_path, &raster) {
+            if !ways.is_empty() {
+                let cleared = Self::carve_waterways(&mut raster, &ways);
+                println!(
+                    "  {} waterway corridors carved ({} raster cells opened)",
+                    ways.len(), cleared
+                );
+            }
+
+            if let Err(e) = Self::save_raster_cache(&raster_path, &raster, ways_fp) {
                 eprintln!("  Warning: could not save raster cache: {}", e);
             } else {
                 println!("  Raster cached to: {}", raster_path);
@@ -154,8 +237,35 @@ impl LandClassifier {
             raster
         };
 
+        let mut corridor_entries: Vec<CorridorSeg> = Vec::new();
+        for w in &ways {
+            // Carving works on whole raster cells, so the channel that actually
+            // ends up open is up to half a cell wider than the declared width.
+            // Match that here or the two disagree: the router happily follows a
+            // carved cell the precise test then calls land.
+            let hw = (w.half_width_km + RASTER_CELL * 111.0 / 2.0) / 111.0;
+            for seg in w.points.windows(2) {
+                let (a, b) = (seg[0], seg[1]);
+                corridor_entries.push(CorridorSeg {
+                    a, b,
+                    half_width_deg_lat: hw,
+                    min_lon: a[0].min(b[0]) - hw * 4.0,
+                    min_lat: a[1].min(b[1]) - hw,
+                    max_lon: a[0].max(b[0]) + hw * 4.0,
+                    max_lat: a[1].max(b[1]) + hw,
+                });
+            }
+        }
+        let corridor_segs = RTree::bulk_load(corridor_entries);
+
         println!("  {} island-scale rings kept for precise tests", island_rings.len());
-        Ok(LandClassifier { tree, raster, island_rings, island_tree })
+        println!(
+            "  {} continental rings indexed as {} segments",
+            coast_rings.len(), coast_seg_count
+        );
+        Ok(LandClassifier {
+            tree, raster, island_rings, island_tree, coast_rings, coast_segs, corridor_segs,
+        })
     }
 
     /// Scanline rasterization using even-odd rule.
@@ -223,37 +333,114 @@ impl LandClassifier {
         atomic.into_iter().map(|a| a.into_inner()).collect()
     }
 
-    fn load_raster_cache(path: &str) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
+    fn load_raster_cache(path: &str, want_fp: u64) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
         let mut f = fs::File::open(path)?;
         let mut buf = Vec::new();
         f.read_to_end(&mut buf)?;
 
-        if buf.len() < 16 { return Err("too small".into()); }
+        if buf.len() < 24 { return Err("too small".into()); }
         let magic   = u64::from_le_bytes(buf[0..8].try_into()?);
         let version = u32::from_le_bytes(buf[8..12].try_into()?);
         let wcount  = u32::from_le_bytes(buf[12..16].try_into()?) as usize;
+        let fp      = u64::from_le_bytes(buf[16..24].try_into()?);
 
         if magic != RASTER_MAGIC  { return Err("magic mismatch".into()); }
         if version != RASTER_VERSION { return Err("version mismatch".into()); }
-        if buf.len() != 16 + wcount * 8 { return Err("size mismatch".into()); }
+        // Editing waterways.geojson must not silently reuse a raster painted
+        // from the old corridors.
+        if fp != want_fp { return Err("waterway fingerprint mismatch".into()); }
+        if buf.len() != 24 + wcount * 8 { return Err("size mismatch".into()); }
 
         let mut raster = vec![0u64; wcount];
-        for (i, chunk) in buf[16..].chunks_exact(8).enumerate() {
+        for (i, chunk) in buf[24..].chunks_exact(8).enumerate() {
             raster[i] = u64::from_le_bytes(chunk.try_into()?);
         }
         Ok(raster)
     }
 
-    fn save_raster_cache(path: &str, raster: &[u64]) -> Result<(), Box<dyn std::error::Error>> {
+    fn save_raster_cache(path: &str, raster: &[u64], fp: u64) -> Result<(), Box<dyn std::error::Error>> {
         let mut f = fs::File::create(path)?;
         f.write_all(&RASTER_MAGIC.to_le_bytes())?;
         f.write_all(&RASTER_VERSION.to_le_bytes())?;
         f.write_all(&(raster.len() as u32).to_le_bytes())?;
+        f.write_all(&fp.to_le_bytes())?;
         for &word in raster { f.write_all(&word.to_le_bytes())?; }
         Ok(())
     }
 
+    /// Paint each corridor into the raster as water, clearing the land bits in
+    /// a band around its centerline. Runs after rasterization so it always
+    /// wins: a corridor is an explicit statement that ships pass here.
+    fn carve_waterways(raster: &mut [u64], ways: &[crate::waterways::Waterway]) -> usize {
+        let mut cleared = 0usize;
+        for w in ways {
+            for seg in w.points.windows(2) {
+                let (a, b) = (seg[0], seg[1]);
+                // Step along the segment in units well under one raster cell so
+                // the painted band has no gaps.
+                let span_deg = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+                let steps = ((span_deg / (RASTER_CELL * 0.4)).ceil() as usize).max(1);
+                for i in 0..=steps {
+                    let t = i as f64 / steps as f64;
+                    let lon = a[0] + t * (b[0] - a[0]);
+                    let lat = a[1] + t * (b[1] - a[1]);
+                    // Convert the half-width to degrees; longitude degrees
+                    // shrink with latitude, so widen the column span to match.
+                    let half_lat = w.half_width_km / 111.0;
+                    let half_lon = half_lat / lat.to_radians().cos().abs().max(0.05);
+                    let r0 = (((lat - half_lat + 90.0) / RASTER_CELL) as isize).max(0) as usize;
+                    let r1 = (((lat + half_lat + 90.0) / RASTER_CELL) as usize + 1).min(RASTER_ROWS);
+                    let c0 = (((lon - half_lon + 180.0) / RASTER_CELL) as isize).max(0) as usize;
+                    let c1 = (((lon + half_lon + 180.0) / RASTER_CELL) as usize + 1).min(RASTER_COLS);
+                    for row in r0..r1 {
+                        for col in c0..c1 {
+                            let bit = row * RASTER_COLS + col;
+                            let word = &mut raster[bit / 64];
+                            let mask = 1u64 << (bit % 64);
+                            if *word & mask != 0 {
+                                *word &= !mask;
+                                cleared += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        cleared
+    }
+
     pub fn ring_count(&self) -> usize { 0 }
+
+    /// True if any carved corridor passes through this cell. The quadtree uses
+    /// this to force subdivision: a corridor is ~2.4km wide, far below the
+    /// ~19km grid spacing `classify_cell` samples a shallow cell at, so without
+    /// it a depth-10 cell over the Amazon reads as solid land, becomes a leaf,
+    /// and the corridor inside it is never resolved.
+    pub fn overlaps_corridor(&self, min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> bool {
+        let env = AABB::from_corners([min_lon, min_lat], [max_lon, max_lat]);
+        self.corridor_segs.locate_in_envelope_intersecting(&env).next().is_some()
+    }
+
+    /// True if the point lies inside a carved corridor, i.e. water we declared
+    /// navigable even though the land polygons disagree.
+    pub fn in_corridor(&self, lon: f64, lat: f64) -> bool {
+        let env = AABB::from_corners([lon, lat], [lon, lat]);
+        for seg in self.corridor_segs.locate_in_envelope_intersecting(&env) {
+            // Distance in degrees, with longitude scaled by cos(lat) so the
+            // corridor is the stated width on the ground rather than on the
+            // lon/lat plane.
+            let k = lat.to_radians().cos().abs().max(0.05);
+            let (px, py) = ((lon - seg.a[0]) * k, lat - seg.a[1]);
+            let (dx, dy) = ((seg.b[0] - seg.a[0]) * k, seg.b[1] - seg.a[1]);
+            let len2 = dx * dx + dy * dy;
+            let t = if len2 == 0.0 { 0.0 } else { ((px * dx + py * dy) / len2).clamp(0.0, 1.0) };
+            let (qx, qy) = (px - t * dx, py - t * dy);
+            if (qx * qx + qy * qy).sqrt() <= seg.half_width_deg_lat {
+                return true;
+            }
+        }
+        false
+    }
 
     /// O(1) bitmap lookup — ~1ns per call.
     /// Longitude is normalized into [-180, 180) so callers may pass
@@ -287,6 +474,12 @@ impl LandClassifier {
     /// continental coasts) and cheap. Holes cancel exterior rings via the shared
     /// even-odd toggle, matching the raster fill.
     pub fn is_land_precise(&self, lon: f64, lat: f64) -> bool {
+        // A carved corridor is water by decree. Exact ring geometry would say
+        // land here (rivers are land in the source polygons), so this has to be
+        // checked before anything else or port connectors up a river fail.
+        if self.in_corridor(lon, lat) {
+            return false;
+        }
         let envelope = AABB::from_corners([lon, lat], [lon, lat]);
         let mut inside = false;
         let mut tested_any = false;
@@ -308,13 +501,31 @@ impl LandClassifier {
                 j = i;
             }
         }
+        // Continents: ray cast east to the antimeridian, toggling the same
+        // parity. Sharing one toggle is what makes a lake (a small hole ring)
+        // inside a continent come out as water: two crossings, even, outside.
+        let ray = AABB::from_corners([lon, lat], [180.0, lat]);
+        for e in self.coast_segs.locate_in_envelope_intersecting(&ray) {
+            let ring = &self.coast_rings[e.ring_idx as usize];
+            let (xi, yi) = (ring[e.i as usize][0], ring[e.i as usize][1]);
+            let (xj, yj) = (ring[e.i as usize + 1][0], ring[e.i as usize + 1][1]);
+            if (yi > lat) != (yj > lat) {
+                let x_cross = (xj - xi) * (lat - yi) / (yj - yi) + xi;
+                if lon < x_cross {
+                    inside = !inside;
+                    tested_any = true;
+                }
+            }
+        }
+
         if tested_any {
-            // Island rings are near: trust the exact result (this is exactly
-            // where the raster is wrong). `inside` is land, outside is water.
+            // Exact geometry covers this point, and this is exactly where the
+            // 2.2km raster is wrong: narrow channels it seals shut, coastlines
+            // it smears seaward. `inside` is land, outside is water.
             inside
         } else {
-            // No island-scale ring here: fall back to the raster for
-            // continental-scale land.
+            // Nothing crossed the ray — open ocean east of every landmass.
+            // The raster is as good as anything here and far cheaper.
             self.is_land(lon, lat)
         }
     }
@@ -371,5 +582,58 @@ mod tests {
         // Open ocean far from any land → nothing.
         assert!(!c.has_island_feature(-30.0, -30.0, -29.0, -29.0, 1.0),
             "open ocean must have no island feature");
+    }
+
+
+    fn classifier() -> LandClassifier {
+        let dir = std::env::var("SEA_ROUTER_DATA").unwrap_or_else(|_| "../data".into());
+        LandClassifier::load(&format!("{}/osm_land_simplified.geojson.json", dir))
+            .expect("land data not found")
+    }
+
+    /// Guards the continental ray cast. Before it existed every one of these
+    /// fell back to the 0.02° (~2.2km) raster, which seals the Bosphorus and
+    /// the fjords shut and pushes coastlines seaward.
+    #[test]
+    #[ignore = "needs the land polygon file; run with --ignored"]
+    fn is_land_precise_matches_known_geography() {
+        let c = classifier();
+        // (name, lon, lat, is_land)
+        let cases: &[(&str, f64, f64, bool)] = &[
+            ("Bosphorus mid-channel",    29.0554,  41.1000, false),
+            ("Sea of Marmara",           28.5000,  40.7000, false),
+            ("Dardanelles",              26.4870,  40.2300, false),
+            ("Geirangerfjord",            6.9000,  62.1000, false),
+            ("Puget Sound",            -122.4000,  47.6200, false),
+            ("Open Atlantic",           -40.0000,  35.0000, false),
+            ("Mid Pacific",            -140.0000,  10.0000, false),
+            ("Sahara",                    2.0000,  25.0000, true),
+            ("Siberia",                  90.0000,  62.0000, true),
+            ("Kansas",                  -98.0000,  38.5000, true),
+            ("Amazon rainforest",       -63.0000,  -5.0000, true),
+            ("Anatolia",                 33.0000,  39.0000, true),
+        ];
+        let wrong: Vec<&str> = cases
+            .iter()
+            .filter(|(_, lon, lat, want)| c.is_land_precise(*lon, *lat) != *want)
+            .map(|(n, _, _, _)| *n)
+            .collect();
+        assert!(wrong.is_empty(), "is_land_precise wrong at: {:?}", wrong);
+    }
+
+    /// The raster is what `classify_cell` and the smoothing hot paths use, so
+    /// its blind spot is worth pinning: it cannot see water narrower than a
+    /// couple of km. This documents the gap the graph still has.
+    #[test]
+    #[ignore = "needs the land polygon file; run with --ignored"]
+    fn raster_cannot_see_the_bosphorus() {
+        let c = classifier();
+        assert!(
+            c.is_land(29.0554, 41.1000),
+            "raster unexpectedly resolves the Bosphorus — if the land data or \
+             RASTER_CELL changed, the quadtree may now form nodes there and \
+             this test should be replaced"
+        );
+        assert!(!c.is_land_precise(29.0554, 41.1000), "exact geometry has the channel");
     }
 }

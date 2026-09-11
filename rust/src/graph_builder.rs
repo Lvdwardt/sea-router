@@ -106,9 +106,15 @@ fn edge_crosses_land(
         if classifier.is_land_precise(cx, cy) {
             return true;
         }
-        // ±1km band
-        if classifier.is_land(cx + perp_lon * offset, cy + perp_lat * offset)
-            || classifier.is_land(cx - perp_lon * offset, cy - perp_lat * offset)
+        // ±1km band. The raster is the cheap pre-filter; it reads land across
+        // the whole of any channel narrower than 2.2km, so confirming with
+        // exact geometry is what lets an edge survive inside the Bosphorus or
+        // a fjord. Without the confirmation every edge in a narrow channel is
+        // pruned and the water we just resolved becomes an isolated component.
+        let a = [cx + perp_lon * offset, cy + perp_lat * offset];
+        let b = [cx - perp_lon * offset, cy - perp_lat * offset];
+        if (classifier.is_land(a[0], a[1]) && classifier.is_land_precise(a[0], a[1]))
+            || (classifier.is_land(b[0], b[1]) && classifier.is_land_precise(b[0], b[1]))
         {
             return true;
         }
@@ -125,7 +131,41 @@ pub struct GraphOutput {
 }
 
 /// Build the adjacency graph from water leaves.
-pub fn build_graph(leaves: &[WaterLeaf], classifier: &LandClassifier) -> GraphOutput {
+/// How far a port may reach to find a graph node it can see over open water.
+const PORT_LINK_MAX_KM: f64 = 60.0;
+/// How many nearby nodes a port links to, when the connector stays in water.
+const PORT_LINKS: usize = 6;
+/// Land hits this close to the port are ignored: berths sit on the shoreline,
+/// so the first few hundred metres of any connector clip land.
+const PORT_SHORE_TOLERANCE_KM: f64 = 0.6;
+
+/// True if the straight line from a port to a water node stays in water,
+/// sampled about every 500m, ignoring land within the shore tolerance of the
+/// port end. Mirrors the router's own connector test so a link that exists in
+/// the graph is one the router will actually accept.
+fn port_connector_clear(
+    classifier: &LandClassifier,
+    port: [f64; 2],
+    node: [f64; 2],
+) -> bool {
+    let total = haversine_km(port[0], port[1], node[0], node[1]);
+    if total < 1e-6 { return true; }
+    let n = ((total / 0.5).ceil() as usize).max(2);
+    for i in 0..=n {
+        let t = i as f64 / n as f64;
+        if t * total <= PORT_SHORE_TOLERANCE_KM { continue; }
+        let lon = port[0] + t * (node[0] - port[0]);
+        let lat = port[1] + t * (node[1] - port[1]);
+        if classifier.is_land_precise(lon, lat) { return false; }
+    }
+    true
+}
+
+pub fn build_graph(
+    leaves: &[WaterLeaf],
+    classifier: &LandClassifier,
+    ports: &[crate::audit::Port],
+) -> GraphOutput {
     let t0 = Instant::now();
 
     // Create nodes from centroids
@@ -353,13 +393,74 @@ pub fn build_graph(leaves: &[WaterLeaf], classifier: &LandClassifier) -> GraphOu
         println!("    {} — {} waypoints injected", canal.name, wp.len());
     }
 
+    // ── Inject port nodes ──
+    //
+    // A quadtree node sits at the centre of a ~430m × 305m cell, so even a
+    // perfectly resolved harbour leaves a port 0.5–2km from the nearest node.
+    // The router hides that when it can draw a clean connector, but the graph
+    // is honest about it only if the port is a node itself. Adding one per port
+    // also gives isolated ports (fjord heads, river berths) a real attachment
+    // point rather than the nearest thing the R-tree happened to find.
+    println!("  Injecting port nodes...");
+    let mut port_nodes_added = 0usize;
+    let mut port_edges_added = 0usize;
+    let mut unlinked: Vec<&str> = Vec::new();
+
+    // Rebuild the lookup so ports can also attach to canal and corridor nodes.
+    let all_pts: Vec<NodePt> = (0..flat_nodes.len() / 3)
+        .map(|i| NodePt {
+            id: i as u32,
+            lon: flat_nodes[i * 3],
+            lat: flat_nodes[i * 3 + 1],
+        })
+        .collect();
+    let all_tree = RTree::bulk_load(all_pts);
+
+    for port in ports {
+        let pt = [port.lon, port.lat];
+        let port_id = flat_nodes.len() / 3;
+
+        let mut links = 0usize;
+        for nn in all_tree.nearest_neighbor_iter(&[pt[0], pt[1]]) {
+            let dist = haversine_km(pt[0], pt[1], nn.lon, nn.lat);
+            if dist > PORT_LINK_MAX_KM { break; }
+            if !port_connector_clear(classifier, pt, [nn.lon, nn.lat]) { continue; }
+            flat_edges.push(port_id as f64);
+            flat_edges.push(nn.id as f64);
+            flat_edges.push((dist * 10.0).round().max(1.0));
+            port_edges_added += 1;
+            links += 1;
+            if links >= PORT_LINKS { break; }
+        }
+
+        if links == 0 {
+            // No water in sight. Adding an orphan node would only give the
+            // router a dead end to snap to, so leave the port out and report it.
+            unlinked.push(&port.name);
+            continue;
+        }
+
+        flat_nodes.push((pt[0] * 100000.0).round() / 100000.0);
+        flat_nodes.push((pt[1] * 100000.0).round() / 100000.0);
+        flat_nodes.push(1.0); // depth 1 — a berth is not a coastal-penalty cell
+        port_nodes_added += 1;
+    }
+
+    println!(
+        "    {} port nodes, {} links ({} ports had no reachable water)",
+        port_nodes_added, port_edges_added, unlinked.len()
+    );
+    if !unlinked.is_empty() {
+        println!("    unlinked: {}", unlinked.join(", "));
+    }
+
     let total_nodes = flat_nodes.len() / 3;
     let total_edges = flat_edges.len() / 3;
 
     println!(
-        "  Graph: {} nodes (+{}), {} edges (+{}) in {:.1}s",
-        total_nodes, canal_nodes_added,
-        total_edges, canal_edges_added,
+        "  Graph: {} nodes (+{} canal, +{} port), {} edges (+{} canal, +{} port) in {:.1}s",
+        total_nodes, canal_nodes_added, port_nodes_added,
+        total_edges, canal_edges_added, port_edges_added,
         t0.elapsed().as_secs_f64()
     );
 

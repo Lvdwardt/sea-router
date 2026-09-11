@@ -20,8 +20,14 @@ pub struct Graph {
     pub base_weights: Vec<f32>,
     /// CSR edge depth ratios (pre-computed)
     pub depth_ratios: Vec<f32>,
-    /// Spatial index for nearest-node lookup
+    /// Spatial index for nearest-node lookup. Main component only.
     pub spatial: RTree<NodeEntry>,
+    /// Connected-component id per node. `u32::MAX` for isolated nodes.
+    pub component: Vec<u32>,
+    /// The component the spatial index is built from.
+    pub main_comp: u32,
+    /// Node count per component, indexed by component id.
+    pub comp_sizes: Vec<usize>,
 }
 
 #[derive(Clone)]
@@ -187,6 +193,9 @@ impl Graph {
             base_weights,
             depth_ratios,
             spatial,
+            component,
+            main_comp,
+            comp_sizes,
         })
     }
 
@@ -215,6 +224,16 @@ impl Graph {
             .take(k)
             .map(|e| e.id as usize)
             .collect()
+    }
+
+    /// Spatial index over every node, including components the router ignores.
+    /// Built on demand: the audit uses it to explain why a port snapped far away.
+    pub fn build_full_index(&self) -> RTree<NodeEntry> {
+        let entries = (0..self.node_count)
+            .filter(|&i| self.offsets[i + 1] > self.offsets[i])
+            .map(|i| NodeEntry { id: i as u32, lon: self.nodes[i * 3], lat: self.nodes[i * 3 + 1] })
+            .collect();
+        RTree::bulk_load(entries)
     }
 
     /// Iterate edges of a node.

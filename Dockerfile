@@ -31,6 +31,11 @@ COPY --from=builder /build/target/release/sea-router-rs /app/sea-router-rs
 COPY data/graph/sea-graph.json /app/data/graph/sea-graph.json
 COPY data/osm_land_simplified.geojson.json /app/data/osm_land_simplified.geojson.json
 
+# Navigable corridors the land polygons omit (rivers, sealed harbours). The
+# classifier looks for this next to the land file and paints it into the raster
+# at startup, so the server must agree with whatever built the graph.
+COPY data/waterways.geojson /app/data/waterways.geojson
+
 COPY viewer.html /app/viewer.html
 
 USER sea
