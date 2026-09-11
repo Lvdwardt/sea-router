@@ -68,7 +68,7 @@ fn subdivide(
 ) -> QuadCell {
     stats.cells += 1;
 
-    let cell_type = classify_cell(classifier, min_lon, min_lat, max_lon, max_lat);
+    let cell_type = classify_cell(classifier, min_lon, min_lat, max_lon, max_lat, depth);
 
     // Pure water or pure land -> leaf
     if cell_type != CellType::Mixed || depth >= max_depth {
@@ -77,7 +77,10 @@ fn subdivide(
         let final_type = if cell_type == CellType::Mixed {
             let cx = (min_lon + max_lon) / 2.0;
             let cy = (min_lat + max_lat) / 2.0;
-            if classifier.is_land(cx, cy) { CellType::Land } else { CellType::Water }
+            // Exact geometry at the leaf. A max-depth cell is ~430m across,
+            // well under the 2.2km raster, so the raster cannot resolve which
+            // side of a narrow channel the centre falls on.
+            if classifier.is_land_precise(cx, cy) { CellType::Land } else { CellType::Water }
         } else {
             cell_type
         };
@@ -126,12 +129,18 @@ fn subdivide(
     }
 }
 
+/// Below this depth a cell is smaller than the 0.02° (~2.2km) land raster, so
+/// raster sampling can no longer tell water from land inside it. Cells this
+/// deep only exist near coastlines, which bounds the cost of the exact test.
+const PRECISE_MIN_DEPTH: u8 = 12;
+
 /// Classify a cell using adaptive grid sampling.
 /// Spacing capped at 0.25° (~28km) to catch small islands.
 fn classify_cell(
     classifier: &LandClassifier,
     min_lon: f64, min_lat: f64,
     max_lon: f64, max_lat: f64,
+    depth: u8,
 ) -> CellType {
     // Fast path: no land polygons near this cell
     if !classifier.overlaps_land(min_lon, min_lat, max_lon, max_lat) {
@@ -159,6 +168,32 @@ fn classify_cell(
                 if land_count > 0 { return CellType::Mixed; }
             }
         }
+    }
+
+    if land_count > 0 && water_count == 0
+        && classifier.overlaps_corridor(min_lon, min_lat, max_lon, max_lat)
+    {
+        // A carved corridor runs through here. Grid sampling at this depth is
+        // far too coarse to land on a 2.4km channel, so subdivide on the
+        // corridor's say-so rather than sealing the cell as land.
+        return CellType::Mixed;
+    }
+
+    if land_count > 0 && water_count == 0 && depth >= PRECISE_MIN_DEPTH {
+        // The raster says solid land, but it smears every channel narrower than
+        // 2.2km shut: the Bosphorus (~680m), the Norwegian fjords, harbour
+        // entrances. Re-test with exact ring geometry before sealing the cell,
+        // or the quadtree never forms nodes in water that is really there.
+        for xi in 0..nx {
+            let lon = min_lon + (xi as f64 / (nx - 1) as f64) * cell_w;
+            for yi in 0..ny {
+                let lat = min_lat + (yi as f64 / (ny - 1) as f64) * cell_h;
+                if !classifier.is_land_precise(lon, lat) {
+                    return CellType::Mixed;
+                }
+            }
+        }
+        return CellType::Land;
     }
 
     if land_count == 0 {

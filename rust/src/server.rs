@@ -108,6 +108,41 @@ fn chaikin_smooth(
 }
 
 
+/// The three stages a caller sees: the raw A* path, the line-of-sight
+/// simplification, and the smoothed line the map actually draws.
+pub struct RoutedPath {
+    pub raw: Vec<[f64; 2]>,
+    pub los: Vec<[f64; 2]>,
+    pub smoothed: Vec<[f64; 2]>,
+    pub distance_km: f64,
+    pub nodes_explored: usize,
+}
+
+/// Route and run the full simplification pipeline. Both HTTP handlers and the
+/// route-quality tests go through here, so a test never checks a path the
+/// server would not actually return.
+pub fn route_pipeline(
+    graph: &Graph,
+    classifier: &LandClassifier,
+    router: &mut SeaRouter,
+    from: [f64; 2],
+    to: [f64; 2],
+    penalty: f32,
+) -> Option<RoutedPath> {
+    let route = router.find_route(graph, classifier, from[0], from[1], to[0], to[1], penalty)?;
+    let los = los::simplify(&route.path, classifier, 0.5);
+    // Fewer Chaikin iterations for long routes — they already have many waypoints
+    let iters = if los.len() > 20 { 2 } else { 4 };
+    let smoothed = chaikin_smooth(&los, iters, classifier);
+    Some(RoutedPath {
+        raw: route.path,
+        los,
+        smoothed,
+        distance_km: route.distance_km,
+        nodes_explored: route.nodes_explored,
+    })
+}
+
 fn make_feature(coords: Vec<[f64; 2]>, name: &str, color: &str, props: serde_json::Value) -> GeoJsonFeature {
     let mut properties = props;
     properties["name"] = serde_json::json!(name);
@@ -147,37 +182,38 @@ async fn route_handler(
 
     let penalty = params.penalty.unwrap_or(5.0);
 
-    let result = state.router.lock().unwrap().find_route(&state.graph, &state.classifier, from[0], from[1], to[0], to[1], penalty);
+    let result = route_pipeline(
+        &state.graph,
+        &state.classifier,
+        &mut state.router.lock().unwrap(),
+        [from[0], from[1]],
+        [to[0], to[1]],
+        penalty,
+    );
 
     match result {
         None => {
             (StatusCode::OK, Json(serde_json::json!({"error": "No route found"}))).into_response()
         }
-        Some(route) => {
-            let astar_ms = t0.elapsed().as_secs_f64() * 1000.0;
-            let los = los::simplify(&route.path, &state.classifier, 0.5);
-            // Fewer Chaikin iterations for long routes — they already have many waypoints
-            let chaikin_iters = if los.len() > 20 { 2 } else { 4 };
-            let final_path = chaikin_smooth(&los, chaikin_iters, &state.classifier);
+        Some(r) => {
             let total_ms = t0.elapsed().as_secs_f64() * 1000.0;
-            let los_ms = total_ms - astar_ms;
 
             println!(
-                "  Route: raw={} → los={} → final={} pts, {}km (A*={:.0}ms LOS={:.0}ms total={:.0}ms)",
-                route.path.len(), los.len(), final_path.len(),
-                route.distance_km as u64, astar_ms, los_ms, total_ms
+                "  Route: raw={} → los={} → final={} pts, {}km (total={:.0}ms)",
+                r.raw.len(), r.los.len(), r.smoothed.len(),
+                r.distance_km as u64, total_ms
             );
 
             let collection = GeoJsonCollection {
                 r#type: "FeatureCollection",
                 features: vec![
-                    make_feature(route.path, "raw", "#ff6600", serde_json::json!({
-                        "distanceKm": route.distance_km as u64,
-                        "nodesExplored": route.nodes_explored,
+                    make_feature(r.raw, "raw", "#ff6600", serde_json::json!({
+                        "distanceKm": r.distance_km as u64,
+                        "nodesExplored": r.nodes_explored,
                         "timeMs": total_ms as u64,
                     })),
-                    make_feature(los, "los", "#00ccff", serde_json::json!({})),
-                    make_feature(final_path, "final", "#ff4444", serde_json::json!({})),
+                    make_feature(r.los, "los", "#00ccff", serde_json::json!({})),
+                    make_feature(r.smoothed, "final", "#ff4444", serde_json::json!({})),
                 ],
             };
 

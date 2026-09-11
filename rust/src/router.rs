@@ -71,8 +71,8 @@ impl Router {
     ) -> Option<RouteResult> {
         let t0 = Instant::now();
 
-        let start = snap_to_water(graph, classifier, from_lon, from_lat);
-        let end   = snap_to_water(graph, classifier, to_lon, to_lat);
+        let start = snap_to_water(graph, classifier, from_lon, from_lat).node;
+        let end   = snap_to_water(graph, classifier, to_lon, to_lat).node;
 
         if start == end {
             // Both ports snap to the same graph node. Return the true port
@@ -200,23 +200,32 @@ const SHORE_TOLERANCE_KM: f64 = 0.6;
 /// How many candidate nodes to consider when snapping a port to the graph.
 const SNAP_CANDIDATES: usize = 16;
 
+/// Where a port coordinate attached to the graph, and how well.
+pub struct Snap {
+    pub node: usize,
+    /// False when no candidate had a clear water connector and the geometrically
+    /// nearest node was used as a fallback. The route then starts at that node
+    /// instead of the port itself.
+    pub connector_clear: bool,
+}
+
 /// Snap a coordinate to the nearest connected graph node that the coordinate
 /// can reach over open water. The geometrically nearest node can sit on the
 /// wrong side of an island (e.g. Bermuda's dockyard faces NW, but the closest
 /// node is across the island to the SW), which would make the route cross land.
 /// Falls back to the geometrically nearest node if none has a clear connector.
-fn snap_to_water(
+pub fn snap_to_water(
     graph: &Graph,
     classifier: &LandClassifier,
     lon: f64, lat: f64,
-) -> usize {
+) -> Snap {
     let cands = graph.nearest_k(lon, lat, SNAP_CANDIDATES);
     for &n in &cands {
         if connector_clear(classifier, [graph.lon(n), graph.lat(n)], [lon, lat]) {
-            return n;
+            return Snap { node: n, connector_clear: true };
         }
     }
-    cands.first().copied().unwrap_or(0)
+    Snap { node: cands.first().copied().unwrap_or(0), connector_clear: false }
 }
 
 /// Prepend the real origin and append the real destination to a routed path
@@ -289,7 +298,7 @@ fn connector_clear(classifier: &LandClassifier, water_node: [f64; 2], port: [f64
 /// around the globe so points straddling the antimeridian (e.g. +179°/-179°)
 /// measure ~2° apart, not ~358°.
 #[inline]
-fn haversine_km(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
+pub fn haversine_km(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
     let r = 6371.0_f64;
     let dlat = (lat2 - lat1).to_radians();
     let mut dlon = (lon2 - lon1).abs() % 360.0;

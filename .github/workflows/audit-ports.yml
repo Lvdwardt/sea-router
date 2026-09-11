@@ -1,0 +1,57 @@
+name: Port Snap Audit
+
+# Routes are only as good as the point where a port attaches to the graph.
+# This downloads the released graph and checks every port in the fixture.
+# Manual and weekly rather than per-push: the graph is 345MB.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1'
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Download graph and land data from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data/graph
+          gh release download "graph-depth-16" \
+            --repo "${{ github.repository }}" \
+            --pattern "sea-graph.json.gz" \
+            --pattern "osm_land_simplified.geojson.json.gz" \
+            --dir data
+          gunzip data/sea-graph.json.gz
+          mv data/sea-graph.json data/graph/sea-graph.json
+          gunzip data/osm_land_simplified.geojson.json.gz
+
+      - name: Run audit
+        run: cd rust && cargo run --release -- audit
+
+      - name: Run snap tests
+        run: cd rust && cargo test --release -- --ignored
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: port-snap-audit
+          path: data/port-snap-audit.json

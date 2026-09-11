@@ -43,6 +43,8 @@ jobs:
               - 'rust/src/graph_builder.rs'
               - 'rust/src/land.rs'
               - 'rust/src/canals.rs'
+              - 'data/waterways.geojson'
+              - 'rust/tests/fixtures/ports.json'
 
       - name: Decide
         id: decide
