@@ -8,8 +8,9 @@ use crate::router::{haversine_km, snap_to_water};
 /// Grid step for the channel search, in km. Fine enough to fit through a
 /// ~700m strait, coarse enough that a 120km box stays cheap.
 const STEP_KM: f64 = 0.15;
-/// How far out to look before giving up on a port.
-const MAX_RADIUS_KM: f64 = 120.0;
+/// How far out to look before giving up on a port. Sognefjord alone runs
+/// ~200km from its head to the sea, so this has to clear that.
+const MAX_RADIUS_KM: f64 = 420.0;
 /// Berths sit on the shoreline and often inside a harbour the polygons have
 /// sealed, so the first stretch out of the port has to ignore land or the
 /// search dies on its first step.
@@ -17,6 +18,12 @@ const SEED_RADIUS_KM: f64 = 1.5;
 /// A cell counts as an exit once a main-component node is this close and the
 /// straight line to it stays in water.
 const EXIT_LINK_KM: f64 = 2.0;
+/// Radius that must be clear water in every direction for a point to count as
+/// open sea. `reconnect_islands` bridges stranded fjord cells into the main
+/// component, so "a main-component node is nearby" is true well inside a fjord
+/// and on its own stops the search halfway up. A fjord is a few km across at
+/// most; this ring only clears once the search is genuinely outside one.
+const OPEN_WATER_RADIUS_KM: f64 = 4.0;
 
 /// A channel found by searching exact ring geometry, ready to be written out
 /// as a corridor.
@@ -114,11 +121,27 @@ pub fn find_channel(graph: &Graph, classifier: &LandClassifier, port: &Port) -> 
 /// True if the router could start a route from here: the nearest main-component
 /// node is close and the port can see it over water.
 fn is_exit(graph: &Graph, classifier: &LandClassifier, p: [f64; 2]) -> bool {
+    if !is_open_water(classifier, p) {
+        return false;
+    }
     let snap = snap_to_water(graph, classifier, p[0], p[1]);
     if !snap.connector_clear {
         return false;
     }
     haversine_km(p[0], p[1], graph.lon(snap.node), graph.lat(snap.node)) <= EXIT_LINK_KM
+}
+
+/// True when every compass direction is still water `OPEN_WATER_RADIUS_KM` out.
+fn is_open_water(classifier: &LandClassifier, p: [f64; 2]) -> bool {
+    let dlat = OPEN_WATER_RADIUS_KM / 111.0;
+    let dlon = dlat / p[1].to_radians().cos().abs().max(0.05);
+    for i in 0..8 {
+        let th = std::f64::consts::TAU * i as f64 / 8.0;
+        if classifier.is_land(p[0] + dlon * th.cos(), p[1] + dlat * th.sin()) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Douglas-Peucker, so a 150m-step BFS path becomes a reviewable polyline.
