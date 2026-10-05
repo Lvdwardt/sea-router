@@ -460,6 +460,16 @@ impl LandClassifier {
     /// R-tree bbox overlap check — used for the open-ocean fast-path in LOS.
     #[inline]
     pub fn overlaps_land(&self, min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> bool {
+        if max_lon - min_lon >= 360.0 {
+            return self.overlaps_land_planar(-180.0, min_lat, 180.0, max_lat);
+        }
+        let shift = ((min_lon + 180.0) / 360.0).floor() * 360.0;
+        let (min_lon, max_lon) = (min_lon - shift, max_lon - shift);
+        self.overlaps_land_planar(min_lon, min_lat, max_lon.min(180.0), max_lat)
+            || (max_lon > 180.0 && self.overlaps_land_planar(-180.0, min_lat, max_lon - 360.0, max_lat))
+    }
+
+    fn overlaps_land_planar(&self, min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> bool {
         let envelope = AABB::from_corners([min_lon, min_lat], [max_lon, max_lat]);
         self.tree.locate_in_envelope_intersecting(&envelope).next().is_some()
     }
@@ -619,6 +629,25 @@ mod tests {
             .map(|(n, _, _, _)| *n)
             .collect();
         assert!(wrong.is_empty(), "is_land_precise wrong at: {:?}", wrong);
+    }
+
+    /// Multi-leg routes unwrap longitude past ±180 to stay continuous, so LOS
+    /// asks about bboxes like Australia at -210°. Unwrapped that is empty
+    /// space, and every shortcut across the continent passed the fast path.
+    #[test]
+    #[ignore = "needs the land polygon file; run with --ignored"]
+    fn overlaps_land_wraps_longitude() {
+        let c = classifier();
+        assert!(c.overlaps_land(140.0, -30.0, 145.0, -25.0), "Australia");
+        assert!(c.overlaps_land(-220.0, -30.0, -215.0, -25.0), "Australia, one wrap west");
+        assert!(c.overlaps_land(-580.0, -30.0, -575.0, -25.0), "Australia, two wraps west");
+        assert!(c.overlaps_land(500.0, -30.0, 505.0, -25.0), "Australia, one wrap east");
+        assert!(c.overlaps_land(175.0, -19.0, 182.0, -16.0), "Fiji, straddling 180");
+        for lon in [-170.0, -140.0, -40.0, 60.0, 150.0] {
+            let planar = c.overlaps_land(lon, -31.0, lon + 1.0, -30.0);
+            assert_eq!(c.overlaps_land(lon - 360.0, -31.0, lon - 359.0, -30.0), planar, "lon {lon}");
+            assert_eq!(c.overlaps_land(lon + 720.0, -31.0, lon + 721.0, -30.0), planar, "lon {lon}");
+        }
     }
 
     /// The raster is what `classify_cell` and the smoothing hot paths use, so
