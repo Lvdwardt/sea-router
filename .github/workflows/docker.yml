@@ -127,7 +127,7 @@ jobs:
       - name: Trigger Coolify redeploy
         run: |
           # Cloudflare's WAF 403s GitHub runner IPs; go straight to the origin.
-          curl -fsS --retry 3 --retry-delay 5 \
+          curl -fsS --retry 3 --retry-delay 5 -X POST \
             --resolve "coolify.cruisello.com:443:89.144.30.194" \
             -H "Authorization: Bearer ${{ secrets.DEPLOY_WEBHOOK_KEY }}" \
             "https://coolify.cruisello.com/api/v1/deploy?uuid=kwkwswo4oc0cscws0cgsoccg&force=false"
